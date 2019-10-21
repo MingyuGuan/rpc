@@ -1,6 +1,6 @@
 from __future__ import print_function
 import zmq
-import threading
+# import threading
 import numpy as np
 import struct
 import time
@@ -15,9 +15,9 @@ if sys.version_info < (3, 0):
     from subprocess32 import Popen, PIPE
 else:
     from subprocess import Popen, PIPE
-from prometheus_client import start_http_server
-from prometheus_client.core import Counter, Gauge, Histogram, Summary
-import clipper_admin.metrics as metrics
+# from prometheus_client import start_http_server
+# from prometheus_client.core import Counter, Gauge, Histogram, Summary
+# import clipper_admin.metrics as metrics
 
 RPC_VERSION = 3
 
@@ -132,9 +132,9 @@ class PredictionError(Exception):
         return repr(self.value)
 
 
-class Server(threading.Thread):
+class Server():
     def __init__(self, context, clipper_ip, clipper_port):
-        threading.Thread.__init__(self)
+        # threading.Thread.__init__(self)
         self.context = context
         self.clipper_ip = clipper_ip
         self.clipper_port = clipper_port
@@ -210,10 +210,10 @@ class Server(threading.Thread):
     def run(self, collect_metrics=True):
         print("Serving predictions for {0} input type.".format(
             input_type_to_string(self.model_input_type)))
-        connected = False
+        # connected = False
         clipper_address = "tcp://{0}:{1}".format(self.clipper_ip,
                                                  self.clipper_port)
-        poller = zmq.Poller()
+        # poller = zmq.Poller()
         sys.stdout.flush()
         sys.stderr.flush()
 
@@ -222,37 +222,37 @@ class Server(threading.Thread):
             INITIAL_INPUT_CONTENT_BUFFER_SIZE)
 
         while True:
-            socket = self.context.socket(zmq.DEALER)
-            poller.register(socket, zmq.POLLIN)
+            socket = self.context.socket(zmq.REQ)
+            # poller.register(socket, zmq.POLLIN)
             socket.connect(clipper_address)
             self.send_heartbeat(socket)
             while True:
-                receivable_sockets = dict(
-                    poller.poll(SOCKET_POLLING_TIMEOUT_MILLIS))
-                if socket not in receivable_sockets or receivable_sockets[socket] != zmq.POLLIN:
-                    # Failed to receive a message before the specified polling timeout
-                    if connected:
-                        curr_time = datetime.now()
-                        time_delta = curr_time - last_activity_time_millis
-                        time_delta_millis = (time_delta.seconds * 1000) + (
-                            time_delta.microseconds / 1000)
-                        if time_delta_millis >= SOCKET_ACTIVITY_TIMEOUT_MILLIS:
-                            # Terminate the session
-                            print("Connection timed out, reconnecting...")
-                            connected = False
-                            poller.unregister(socket)
-                            socket.close()
-                            break
-                        else:
-                            self.send_heartbeat(socket)
-                        sys.stdout.flush()
-                        sys.stderr.flush()
-                    continue
+            #     receivable_sockets = dict(
+            #         poller.poll(SOCKET_POLLING_TIMEOUT_MILLIS))
+            #     if socket not in receivable_sockets or receivable_sockets[socket] != zmq.POLLIN:
+            #         # Failed to receive a message before the specified polling timeout
+            #         if connected:
+            #             curr_time = datetime.now()
+            #             time_delta = curr_time - last_activity_time_millis
+            #             time_delta_millis = (time_delta.seconds * 1000) + (
+            #                 time_delta.microseconds / 1000)
+            #             if time_delta_millis >= SOCKET_ACTIVITY_TIMEOUT_MILLIS:
+            #                 # Terminate the session
+            #                 print("Connection timed out, reconnecting...")
+            #                 connected = False
+            #                 poller.unregister(socket)
+            #                 socket.close()
+            #                 break
+            #             else:
+            #                 self.send_heartbeat(socket)
+            #             sys.stdout.flush()
+            #             sys.stderr.flush()
+            #         continue
 
                 # Received a message before the polling timeout
-                if not connected:
-                    connected = True
-                last_activity_time_millis = datetime.now()
+                # if not connected:
+                #     connected = True
+                # last_activity_time_millis = datetime.now()
 
                 t1 = datetime.now()
                 # Receive delimiter between routing identity and content
@@ -260,6 +260,7 @@ class Server(threading.Thread):
                 rpc_version_bytes = socket.recv()
                 rpc_version = struct.unpack("<I", rpc_version_bytes)[0]
                 self.validate_rpc_version(rpc_version)
+                print("recv rpc version: " + str(rpc_version))
                 msg_type_bytes = socket.recv()
                 msg_type = struct.unpack("<I", msg_type_bytes)[0]
                 if msg_type == MESSAGE_TYPE_HEARTBEAT:
@@ -360,18 +361,18 @@ class Server(threading.Thread):
                         parse_time = (t3 - t2).total_seconds()
                         handle_time = (t4 - t3).total_seconds()
 
-                        if collect_metrics:
-                            metrics.report_metric('clipper_mc_pred_total', 1)
-                            metrics.report_metric('clipper_mc_recv_time_ms',
-                                                  recv_time * 1000.0)
-                            metrics.report_metric('clipper_mc_parse_time_ms',
-                                                  parse_time * 1000.0)
-                            metrics.report_metric('clipper_mc_handle_time_ms',
-                                                  handle_time * 1000.0)
-                            metrics.report_metric(
-                                'clipper_mc_end_to_end_latency_ms',
-                                (recv_time + parse_time + handle_time) *
-                                1000.0)
+                        # if collect_metrics:
+                        #     metrics.report_metric('clipper_mc_pred_total', 1)
+                        #     metrics.report_metric('clipper_mc_recv_time_ms',
+                        #                           recv_time * 1000.0)
+                        #     metrics.report_metric('clipper_mc_parse_time_ms',
+                        #                           parse_time * 1000.0)
+                        #     metrics.report_metric('clipper_mc_handle_time_ms',
+                        #                           handle_time * 1000.0)
+                        #     metrics.report_metric(
+                        #         'clipper_mc_end_to_end_latency_ms',
+                        #         (recv_time + parse_time + handle_time) *
+                        #         1000.0)
 
                         print("recv: %f s, parse: %f s, handle: %f s" %
                               (recv_time, parse_time, handle_time))
@@ -719,9 +720,9 @@ class RPCService:
         # are ready
         with open("./model_is_ready.check", "w") as f:
             f.write("READY")
-        if self.collect_metrics:
-            start_metric_server()
-            add_metrics()
+        # if self.collect_metrics:
+        #     start_metric_server()
+        #     add_metrics()
 
         self.server.run(collect_metrics=self.collect_metrics)
 
