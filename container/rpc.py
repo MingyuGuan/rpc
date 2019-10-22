@@ -328,6 +328,8 @@ class Server():
                             int(inp_size) for inp_size in input_sizes
                         ]
 
+                        print("recv request with " + str(num_inputs) + " inputs of " + input_type_to_string(input_type) + " type")
+
                         if input_type == INPUT_TYPE_STRINGS:
                             inputs = self.recv_string_content(
                                 socket, num_inputs, input_sizes)
@@ -435,6 +437,7 @@ class Server():
                 self.input_content_buffer)[:input_content_size_bytes]
 
             item_start_idx = 0
+            print("num_inputs is %d" % num_inputs)
             for i in range(num_inputs):
                 input_size = input_sizes[i]
                 # Obtain a memoryview of the received message's
@@ -452,6 +455,7 @@ class Server():
 
             # All inputs are of the same size, so we can use
             # np.reshape to construct an input matrix
+            print("length of inputs is %d" % len(inputs))
             inputs = np.reshape(inputs, (len(input_sizes), -1))
 
             return inputs
@@ -527,9 +531,7 @@ class PredictionResponse:
         output : string
         """
         if not isinstance(output, str):
-            output = unicode(output, "utf-8").encode("utf-8")
-        else:
-            output = output.encode('utf-8')
+            output = str(output)
         self.outputs.append(output)
         self.num_outputs += 1
 
@@ -561,9 +563,9 @@ class PredictionResponse:
             if idx == self.num_outputs - 1:
                 # Don't use the `SNDMORE` flag if
                 # this is the last output being sent
-                socket.send(self.outputs[idx])
+                socket.send_string(self.outputs[idx])
             else:
-                socket.send(self.outputs[idx], flags=zmq.SNDMORE)
+                socket.send_string(self.outputs[idx], flags=zmq.SNDMORE)
 
         event_history.insert(EVENT_HISTORY_SENT_CONTAINER_CONTENT)
 

@@ -126,6 +126,135 @@ class PredictionError(Exception):
     def __str__(self):
         return repr(self.value)
 
+class PredictionRequest:
+    header_buffer = bytearray(INITIAL_HEADER_BUFFER_SIZE)
+
+    def __init__(self, msg_id, input_type):
+        """
+        Parameters
+        ----------
+        msg_id : bytes
+            The message id associated with the PredictRequest
+            for which this is a response
+        """
+        self.msg_id = msg_id
+        self.input_type = string_to_input_type(input_type)
+        self.inputs = []
+        self.num_inputs = 0
+
+    def add_input(self, inp):
+        """
+        Parameters
+        ----------
+        input_ : string
+        """
+        # if not isinstance(inp, str):
+        #     inp = str(inp)
+
+        self.inputs.append(inp)
+        self.num_inputs += 1
+
+    def send(self, socket, event_history):
+        """
+        Sends the encapsulated response data via
+        the specified socket
+
+        Parameters
+        ----------
+        socket : zmq.Socket
+        event_history : EventHistory
+            The RPC event history that should be
+            updated as a result of this operation
+        """
+        assert self.num_inputs > 0
+        input_header, header_length_bytes = self._create_input_header()
+        if sys.version_info < (3, 0):
+            socket.send("", flags=zmq.SNDMORE)
+        else:
+            socket.send_string("", flags=zmq.SNDMORE)
+        socket.send(struct.pack("<I", RPC_VERSION), zmq.SNDMORE)
+        socket.send(
+            struct.pack("<I", MESSAGE_TYPE_CONTAINER_CONTENT),
+            flags=zmq.SNDMORE)
+
+        socket.send(struct.pack("<I", self.msg_id), flags=zmq.SNDMORE)
+        socket.send(
+            struct.pack("<I", REQUEST_TYPE_PREDICT),
+            flags=zmq.SNDMORE)
+
+        socket.send(struct.pack("<Q", header_length_bytes), flags=zmq.SNDMORE)
+        socket.send(input_header, flags=zmq.SNDMORE)
+
+        for idx in range(self.num_inputs):
+            if idx == self.num_inputs - 1:
+                # Don't use the `SNDMORE` flag if
+                # this is the last input being sent
+                if self.input_type == INPUT_TYPE_STRINGS:
+                    socket.send_string(self.inputs[idx])
+                else:
+                    socket.send(self._format_input(self.inputs[idx]))
+            else:
+                if self.input_type == INPUT_TYPE_STRINGS:
+                    socket.send_string(self.inputs[idx], flags=zmq.SNDMORE)
+                else:
+                    socket.send(self._format_input(self.inputs[idx]), flags=zmq.SNDMORE)
+
+        event_history.insert(EVENT_HISTORY_SENT_CONTAINER_CONTENT)
+
+    def _format_input(self, inp):
+        if self.input_type == INPUT_TYPE_BYTES:
+            return struct.pack("<B", inp)
+        elif self.input_type == INPUT_TYPE_INTS:
+            return struct.pack("<I", inp)
+        elif self.input_type == INPUT_TYPE_FLOATS:
+            return struct.pack("<f", inp)
+        elif self.input_type == INPUT_TYPE_DOUBLES:
+            return struct.pack("<d", inp)
+        elif self.input_type == INPUT_TYPE_STRINGS:
+            return inp
+
+    def _expand_buffer_if_necessary(self, size):
+        """
+        If necessary, expands the reusable input
+        header buffer to accomodate content of the
+        specified size
+
+        size : int
+            The size, in bytes, that the buffer must be
+            able to store
+        """
+        if len(PredictionRequest.header_buffer) < size:
+            PredictionRequest.header_buffer = bytearray(size * 2)
+
+    def _create_input_header(self):
+        """
+        Returns
+        ----------
+        (bytearray, int)
+            A tuple with the input header as the first
+            element and the header length as the second
+            element
+        """
+        header_length = BYTES_PER_LONG * (len(self.inputs) + 2)
+        self._expand_buffer_if_necessary(header_length)
+        header_idx = 0
+        struct.pack_into("<Q", PredictionRequest.header_buffer, header_idx,
+                         self.input_type)
+        header_idx += BYTES_PER_LONG
+        struct.pack_into("<Q", PredictionRequest.header_buffer, header_idx,
+                         self.num_inputs)
+        header_idx += BYTES_PER_LONG
+        for inp in self.inputs:
+            if isinstance(inp, str):
+                struct.pack_into("<Q", PredictionRequest.header_buffer,
+                             header_idx, len(inp))
+            else:
+                struct.pack_into("<Q", PredictionRequest.header_buffer,
+                             header_idx, input_type_to_dtype(self.input_type).itemsize)
+            header_idx += BYTES_PER_LONG
+
+        return PredictionRequest.header_buffer[:header_length], header_length
+
 class ClientMetadata():
     def __init__(self, model_name, model_version, model_input_type, client_rpc_version):
         self.model_name = model_name
@@ -169,6 +298,40 @@ class Server():
     def get_event_history(self):
         return self.event_history.get_events()
 
+    def _get_prediction_request(self, input_type, inputs):
+        """
+        Returns
+        -------
+        PredictionRequest
+            A prediction respuest containing inputs
+        """
+        request = PredictionRequest(self.msg_id, input_type)
+        self.msg_id += 1
+        for inp in inputs:
+            request.add_input(inp)
+
+        return request
+
+    def send_prediction_request(self, input_type, inputs):
+        request = self._get_prediction_request(input_type, inputs)
+        request.send(self.socket, self.event_history)
+
+    def recv_prediction_response(self):
+        self.socket.recv()
+        msg_type_bytes = self.socket.recv()
+        msg_type = struct.unpack("<I", msg_type_bytes)[0]
+
+        if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
+            msg_id_bytes = socket.recv()
+            msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
+            print("Got response for request message %d " % msg_id)
+            # list of byte arrays
+            response_header = socket.recv()
+            response_type = struct.unpack("<I", response_header)[0]
+
+            if response_type == REQUEST_TYPE_PREDICT:
+                pass
+    
     def connect_to_container(self):
         print("Connecting to container...")
         self.server_address = "tcp://{0}:{1}".format(self.server_ip,
@@ -224,17 +387,6 @@ class Server():
         else:
             print("Wrong message type %d, should be new container msg" % msg_type)
             raise
-
-    def senf_prediction_request(self):
-        self.socket.send("", zmq.SNDMORE)
-        self.socket.send(struct.pack("<I", RPC_VERSION), zmq.SNDMORE)
-        self.socket.send(struct.pack("<I", MESSAGE_TYPE_CONTAINER_CONTENT), zmq.SNDMORE) # Indicates that this is a container content message
-        self.socket.send(struct.pack("<I", self.msg_id), zmq.SNDMORE)
-        self.msg_id = self.msg_id + 1
-        self.socket.send(struct.pack("<I", REQUEST_TYPE_PREDICT), zmq.SNDMORE)
-
-        # Request data: Pair of input data, data start index, data size in bytes
-
 
     def recv_string_content(self, num_inputs, input_sizes):
         # Create an empty numpy array that will contain
@@ -328,5 +480,8 @@ class RPCService:
         context = zmq.Context()
         self.server = Server(context, ip, server_port)
 
-    def connect():
+    def connect(self):
         self.server.connect_to_container() 
+
+    def send_prediction_request(self, input_type, inputs):
+        self.server.send_prediction_request(input_type, inputs)
