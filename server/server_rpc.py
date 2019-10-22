@@ -139,8 +139,10 @@ class Server():
         self.server_ip = server_ip
         self.server_port = server_port
         self.event_history = EventHistory(EVENT_HISTORY_BUFFER_SIZE)
-        # bool: whether a cotainer registerd
-        self.registered = False
+        # bool: whether a container is connected
+        self.connected = False
+        # unique identifier for each msg
+        self.msg_id = 0
 
     def validate_rpc_version(self, received_version):
         if received_version != RPC_VERSION:
@@ -148,52 +150,29 @@ class Server():
                 "ERROR: Received an RPC message with version: {clv} that does not match container version: {mcv}"
                 .format(clv=received_version, mcv=RPC_VERSION))
 
-    def send_container_metadata(self, socket):
+    def send_heartbeat(self):
         if sys.version_info < (3, 0):
-            socket.send("", zmq.SNDMORE)
+            self.socket.send("", zmq.SNDMORE)
         else:
-            socket.send("".encode('utf-8'), zmq.SNDMORE)
-        socket.send(struct.pack("<I", MESSAGE_TYPE_NEW_CONTAINER), zmq.SNDMORE)
-        socket.send_string(self.model_name, zmq.SNDMORE)
-        socket.send_string(str(self.model_version), zmq.SNDMORE)
-        socket.send_string(str(self.model_input_type), zmq.SNDMORE)
-        socket.send(struct.pack("<I", RPC_VERSION))
-        self.event_history.insert(EVENT_HISTORY_SENT_CONTAINER_METADATA)
-        print("Sent container metadata!")
-        sys.stdout.flush()
-        sys.stderr.flush()
-
-    def send_heartbeat(self, socket, registered):
-        if sys.version_info < (3, 0):
-            socket.send("", zmq.SNDMORE)
-        else:
-            socket.send_string("", zmq.SNDMORE)
+            self.socket.send_string("", zmq.SNDMORE)
         # every outbount msg should begin with RPC version
-        socket.send(struct.pack("<I", RPC_VERSION), zmq.SNDMORE)
-        socket.send(struct.pack("<I", MESSAGE_TYPE_HEARTBEAT), zmq.SNDMORE)
-        if not registered:
-            socket.send(struct.pack("<I", HEARTBEAT_TYPE_REQUEST_CONTAINER_METADATA))
+        self.socket.send(struct.pack("<I", RPC_VERSION), zmq.SNDMORE)
+        self.socket.send(struct.pack("<I", MESSAGE_TYPE_HEARTBEAT), zmq.SNDMORE)
+        if not self.connected:
+            self.socket.send(struct.pack("<I", HEARTBEAT_TYPE_REQUEST_CONTAINER_METADATA))
             print("Sent heartbeat type " + str(HEARTBEAT_TYPE_REQUEST_CONTAINER_METADATA))
         else:
-            socket.send(struct.pack("<I", HEARTBEAT_TYPE_KEEPALIVE))
+            self.socket.send(struct.pack("<I", HEARTBEAT_TYPE_KEEPALIVE))
             print("Sent heartbeat type " + str(HEARTBEAT_TYPE_KEEPALIVE))
         self.event_history.insert(EVENT_HISTORY_SENT_HEARTBEAT)
-
-    # def handle_heartbeat(self, socket):
-    # 	msg_heartbeat_type_bytes = socket.recv()
-    # 	heartbeat_type = struct.unpack("<I", msg_heartbeat_type_bytes)[0]
-    # 	return heartbeat_type == HEARTBEAT_TYPE_REQUEST_CONTAINER_METADATA
 
     def get_event_history(self):
         return self.event_history.get_events()
 
-    def run(self):
-        print("Serving predictions for {0} input type.".format(
-            input_type_to_string(self.model_input_type)))
-        # connected = False
-        server_address = "tcp://{0}:{1}".format(self.server_ip,
+    def connect_to_container(self):
+        print("Connecting to container...")
+        self.server_address = "tcp://{0}:{1}".format(self.server_ip,
                                                  self.server_port)
-        # poller = zmq.Poller()
         sys.stdout.flush()
         sys.stderr.flush()
 
@@ -201,178 +180,77 @@ class Server():
         self.input_content_buffer = bytearray(
             INITIAL_INPUT_CONTENT_BUFFER_SIZE)
 
-        while True:
-            socket = self.context.socket(zmq.REP)
-            # poller.register(socket, zmq.POLLIN)
-            socket.bind(server_address)
-            # self.send_heartbeat(socket)
-            while True:
-                # receivable_sockets = dict(
-                #     poller.poll(SOCKET_POLLING_TIMEOUT_MILLIS))
-                # if socket not in receivable_sockets or receivable_sockets[socket] != zmq.POLLIN:
-                #     # Failed to receive a message before the specified polling timeout
-                #     if connected:
-                #         curr_time = datetime.now()
-                #         time_delta = curr_time - last_activity_time_millis
-                #         time_delta_millis = (time_delta.seconds * 1000) + (
-                #             time_delta.microseconds / 1000)
-                #         if time_delta_millis >= SOCKET_ACTIVITY_TIMEOUT_MILLIS:
-                #             # Terminate the session
-                #             print("Connection timed out, reconnecting...")
-                #             connected = False
-                #             poller.unregister(socket)
-                #             socket.close()
-                #             break
-                #         else:
-                #             self.send_heartbeat(socket, self.registered)
-                #         sys.stdout.flush()
-                #         sys.stderr.flush()
-                #     continue
+        self.socket = self.context.socket(zmq.REP)
+        self.socket.bind(self.server_address)
 
-                # # Received a message before the polling timeout
-                # if not connected:
-                #     connected = True
-                # last_activity_time_millis = datetime.now()
+        # recv heartbeat from container
+        self.socket.recv()
+        msg_type_bytes = self.socket.recv()
+        msg_type = struct.unpack("<I", msg_type_bytes)[0]
 
-                t1 = datetime.now()
-                # Receive delimiter between routing identity and content
-                socket.recv()
-                msg_type_bytes = socket.recv()
-                msg_type = struct.unpack("<I", msg_type_bytes)[0]
+        # send heartbeat response to ask for container metadata
+        if msg_type == MESSAGE_TYPE_HEARTBEAT:
+            self.event_history.insert(EVENT_HISTORY_RECEIVED_HEARTBEAT)
+            print("Received heartbeat!")
+            sys.stdout.flush()
+            sys.stderr.flush()
+            if self.connected:
+                print("Cannot connect to another container when already connected with one!")
+                raise
+            else:
+                self.send_heartbeat()
+        else:
+            print("Wrong message type %d, should be heartbeat" % msg_type)
+            raise
 
-                if msg_type == MESSAGE_TYPE_HEARTBEAT:
-                    self.event_history.insert(EVENT_HISTORY_RECEIVED_HEARTBEAT)
-                    print("Received heartbeat!")
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    # heartbeat_type_bytes = socket.recv()
-                    # heartbeat_type = struct.unpack("<I",
-                    #                                heartbeat_type_bytes)[0]
-                    self.send_heartbeat(socket, self.registered)
-                    continue
-                elif msg_type == MESSAGE_TYPE_NEW_CONTAINER:
-                    self.event_history.insert(
-                        EVENT_HISTORY_RECEIVED_CONTAINER_METADATA)
-                    print(
-                        "Received new container message from Container!"
-                    )
-                    model_name = socket.recv_string()
-                    model_version = socket.recv_string()
-                    model_input_type = socket.recv_string()
-                    client_rpc_version_bytes = socket.recv()
-                    client_rpc_version = struct.unpack("<I", client_rpc_version_bytes)[0]
+        self.socket.recv()
+        msg_type_bytes = self.socket.recv()
+        msg_type = struct.unpack("<I", msg_type_bytes)[0]
+        if msg_type == MESSAGE_TYPE_NEW_CONTAINER:
+            self.event_history.insert(
+                EVENT_HISTORY_RECEIVED_CONTAINER_METADATA)
+            print(
+                "Received new container message from container!"
+            )
+            model_name = self.socket.recv_string()
+            model_version = self.socket.recv_string()
+            model_input_type = self.socket.recv_string()
+            client_rpc_version_bytes = self.socket.recv()
+            client_rpc_version = struct.unpack("<I", client_rpc_version_bytes)[0]
 
-                    self.client_meta = ClientMetadata(model_name, model_version, model_input_type, client_rpc_version)
-                    self.registered = True
-                    print("Client Model " + model_name + "Registered")
-                    continue
-                elif msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
-                    self.event_history.insert(
-                        EVENT_HISTORY_RECEIVED_CONTAINER_CONTENT)
-                    msg_id_bytes = socket.recv()
-                    msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
+            self.client_meta = ClientMetadata(model_name, model_version, model_input_type, client_rpc_version)
+            self.connected = True
+            print("Client Model " + model_name + "is connected")
+        else:
+            print("Wrong message type %d, should be new container msg" % msg_type)
+            raise
 
-                    print("Got start of message %d " % msg_id)
-                    # list of byte arrays
-                    request_header = socket.recv()
-                    request_type = struct.unpack("<I", request_header)[0]
+    def senf_prediction_request(self):
+        self.socket.send("", zmq.SNDMORE)
+        self.socket.send(struct.pack("<I", RPC_VERSION), zmq.SNDMORE)
+        self.socket.send(struct.pack("<I", MESSAGE_TYPE_CONTAINER_CONTENT), zmq.SNDMORE) # Indicates that this is a container content message
+        self.socket.send(struct.pack("<I", self.msg_id), zmq.SNDMORE)
+        self.msg_id = self.msg_id + 1
+        self.socket.send(struct.pack("<I", REQUEST_TYPE_PREDICT), zmq.SNDMORE)
 
-                    if request_type == REQUEST_TYPE_PREDICT:
-                        input_header_size_raw = socket.recv()
-                        input_header_size_bytes = struct.unpack(
-                            "<Q", input_header_size_raw)[0]
+        # Request data: Pair of input data, data start index, data size in bytes
 
-                        typed_input_header_size = int(
-                            input_header_size_bytes /
-                            INPUT_HEADER_DTYPE.itemsize)
 
-                        if len(self.input_header_buffer
-                               ) < input_header_size_bytes:
-                            self.input_header_buffer = bytearray(
-                                input_header_size_bytes * 2)
-
-                        # While this procedure still incurs a copy, it saves a potentially
-                        # costly memory allocation by ZMQ. This savings only occurs
-                        # if the input header did not have to be resized
-                        input_header_view = memoryview(
-                            self.input_header_buffer)[:input_header_size_bytes]
-                        input_header_content = socket.recv(copy=False).buffer
-                        input_header_view[:
-                                          input_header_size_bytes] = input_header_content
-
-                        parsed_input_header = np.frombuffer(
-                            self.input_header_buffer,
-                            dtype=INPUT_HEADER_DTYPE)[:typed_input_header_size]
-
-                        input_type, num_inputs, input_sizes = parsed_input_header[
-                            0], parsed_input_header[1], parsed_input_header[2:]
-
-                        input_dtype = input_type_to_dtype(input_type)
-                        input_sizes = [
-                            int(inp_size) for inp_size in input_sizes
-                        ]
-
-                        if input_type == INPUT_TYPE_STRINGS:
-                            inputs = self.recv_string_content(
-                                socket, num_inputs, input_sizes)
-                        else:
-                            inputs = self.recv_primitive_content(
-                                socket, num_inputs, input_sizes, input_dtype)
-
-                        t2 = datetime.now()
-
-                        if int(input_type) != int(self.model_input_type):
-                            print((
-                                "Received incorrect input. Expected {expected}, "
-                                "received {received}").format(
-                                    expected=input_type_to_string(
-                                        int(self.model_input_type)),
-                                    received=input_type_to_string(
-                                        int(input_type))))
-                            raise
-
-                        t3 = datetime.now()
-
-                        prediction_request = PredictionRequest(
-                            msg_id_bytes, inputs)
-                        response = self.handle_prediction_request(
-                            prediction_request)
-
-                        t4 = datetime.now()
-
-                        response.send(socket, self.event_history)
-
-                        recv_time = (t2 - t1).total_seconds()
-                        parse_time = (t3 - t2).total_seconds()
-                        handle_time = (t4 - t3).total_seconds()
-
-                        sys.stdout.flush()
-                        sys.stderr.flush()
-
-                    else:
-                        feedback_request = FeedbackRequest(msg_id_bytes, [])
-                        response = self.handle_feedback_request(received_msg)
-                        response.send(socket, self.event_history)
-                        print("recv: %f s" % ((t2 - t1).total_seconds()))
-
-                sys.stdout.flush()
-                sys.stderr.flush()
-
-    def recv_string_content(self, socket, num_inputs, input_sizes):
+    def recv_string_content(self, num_inputs, input_sizes):
         # Create an empty numpy array that will contain
         # input string references
         inputs = np.empty(num_inputs, dtype=object)
         for i in range(num_inputs):
             # Obtain a memoryview of the received message's
             # ZMQ frame buffer
-            input_item_buffer = socket.recv(copy=False).buffer
+            input_item_buffer = self.socket.recv(copy=False).buffer
             # Copy the memoryview content into a string object
             input_str = input_item_buffer.tobytes()
             inputs[i] = input_str
 
         return inputs
 
-    def recv_primitive_content(self, socket, num_inputs, input_sizes,
+    def recv_primitive_content(self, num_inputs, input_sizes,
                                input_dtype):
         def recv_different_lengths():
             # Create an empty numpy array that will contain
@@ -382,7 +260,7 @@ class Server():
                 # Receive input data and copy it into a byte
                 # buffer that can be parsed into a writeable
                 # array
-                input_item_buffer = socket.recv(copy=True)
+                input_item_buffer = self.socket.recv(copy=True)
                 input_item = np.frombuffer(
                     input_item_buffer, dtype=input_dtype)
                 inputs[i] = input_item
@@ -407,7 +285,7 @@ class Server():
                 input_size = input_sizes[i]
                 # Obtain a memoryview of the received message's
                 # ZMQ frame buffer
-                input_item_buffer = socket.recv(copy=False).buffer
+                input_item_buffer = self.socket.recv(copy=False).buffer
                 # Copy the memoryview content into a pre-allocated content buffer
                 input_content_view[item_start_idx:item_start_idx +
                                    input_size] = input_item_buffer
@@ -434,9 +312,6 @@ class Model(object):
         pass
 
 class RPCService:
-    def __init__(self):
-    	self.host = "127.0.0.1"
-
     def get_event_history(self):
         if self.server:
             return self.server.get_event_history()
@@ -444,22 +319,14 @@ class RPCService:
             print("Cannot retrieve message history for inactive RPC service!")
             raise
 
-    def start(self, model, model_name, model_version, server_port, input_type="doubles"):
-        """
-        Args:
-            model (object): The loaded model object ready to make predictions.
-        """
-
+    def start(self, server_port, server_ip = "127.0.0.1", input_type="doubles"):
         try:
-            ip = socket.gethostbyname(self.host)
+            ip = socket.gethostbyname(server_ip)
         except socket.error as e:
             print("Error resolving %s: %s" % (self.host, e))
             sys.exit(1)
         context = zmq.Context()
         self.server = Server(context, ip, server_port)
-        self.server.model_name = model_name
-        self.server.model_version = model_version
-        self.server.model_input_type = string_to_input_type(input_type)
-        self.server.model = model
 
-        self.server.run()
+    def connect():
+        self.server.connect_to_container() 

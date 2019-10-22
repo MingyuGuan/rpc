@@ -301,6 +301,7 @@ class Server():
                             input_header_size_bytes /
                             INPUT_HEADER_DTYPE.itemsize)
 
+                        # adjust input buffer size
                         if len(self.input_header_buffer
                                ) < input_header_size_bytes:
                             self.input_header_buffer = bytearray(
