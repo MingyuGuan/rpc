@@ -255,18 +255,18 @@ class PredictionRequest:
 
         return PredictionRequest.header_buffer[:header_length], header_length
 
-class ClientMetadata():
-    def __init__(self, model_name, model_version, model_input_type, client_rpc_version):
+class ContainerMetadata():
+    def __init__(self, model_name, model_version, model_input_type, container_rpc_version):
         self.model_name = model_name
         self.model_version  = model_version
         self.model_input_type = model_input_type
-        self.client_rpc_version = client_rpc_version
+        self.container_rpc_version = container_rpc_version
 
-class Client():
-    def __init__(self, context, client_ip, client_port):
+class Actor():
+    def __init__(self, context, actor_ip, actor_port):
         self.context = context
-        self.client_ip = client_ip
-        self.client_port = client_port
+        self.actor_ip = actor_ip
+        self.actor_port = actor_port
         self.event_history = EventHistory(EVENT_HISTORY_BUFFER_SIZE)
         # bool: whether a container is connected
         self.connected = False
@@ -419,8 +419,8 @@ class Client():
     
     def connect_to_container(self):
         print("Connecting to container...")
-        self.client_address = "tcp://{0}:{1}".format(self.client_ip,
-                                                 self.client_port)
+        self.actor_address = "tcp://{0}:{1}".format(self.actor_ip,
+                                                 self.actor_port)
         sys.stdout.flush()
         sys.stderr.flush()
 
@@ -429,7 +429,7 @@ class Client():
             INITIAL_CONTENT_BUFFER_SIZE)
 
         self.socket = self.context.socket(zmq.REP)
-        self.socket.connect(self.client_address)
+        self.socket.connect(self.actor_address)
 
         # recv heartbeat from container
         self.socket.recv()
@@ -463,12 +463,12 @@ class Client():
             model_name = self.socket.recv_string()
             model_version = self.socket.recv_string()
             model_input_type = self.socket.recv_string()
-            client_rpc_version_bytes = self.socket.recv()
-            client_rpc_version = struct.unpack("<I", client_rpc_version_bytes)[0]
+            container_rpc_version_bytes = self.socket.recv()
+            container_rpc_version = struct.unpack("<I", container_rpc_version_bytes)[0]
 
-            self.client_meta = ClientMetadata(model_name, model_version, model_input_type, client_rpc_version)
+            self.container_meta = ContainerMetadata(model_name, model_version, model_input_type, container_rpc_version)
             self.connected = True
-            print("Client Model " + model_name + " is connected")
+            print("Actor Model " + model_name + " is connected")
         else:
             print("Wrong message type %d, should be new container msg" % msg_type)
             raise
@@ -546,24 +546,24 @@ class Client():
 
 class RPCService:
     def get_event_history(self):
-        if self.client:
-            return self.client.get_event_history()
+        if self.actor:
+            return self.actor.get_event_history()
         else:
             print("Cannot retrieve message history for inactive RPC service!")
             raise
 
-    def start(self, client_port, client_ip = "127.0.0.1", input_type="doubles"):
+    def start(self, actor_port, actor_ip = "127.0.0.1", input_type="doubles"):
         try:
-            ip = socket.gethostbyname(client_ip)
+            ip = socket.gethostbyname(actor_ip)
         except socket.error as e:
             print("Error resolving %s: %s" % (self.host, e))
             sys.exit(1)
         context = zmq.Context()
-        self.client = Client(context, ip, client_port)
+        self.actor = Actor(context, ip, actor_port)
 
     def connect(self):
-        self.client.connect_to_container() 
+        self.actor.connect_to_container() 
 
     def send_prediction_request(self, input_type, inputs):
         # return request result
-        return self.client.send_prediction_request(input_type, inputs)
+        return self.actor.send_prediction_request(input_type, inputs)

@@ -207,7 +207,7 @@ class Server():
     def get_event_history(self):
         return self.event_history.get_events()
 
-    def run(self, collect_metrics=True):
+    def run(self):
         print("Serving predictions for {0} input type.".format(
             input_type_to_string(self.model_input_type)))
         # connected = False
@@ -363,19 +363,6 @@ class Server():
                         recv_time = (t2 - t1).total_seconds()
                         parse_time = (t3 - t2).total_seconds()
                         handle_time = (t4 - t3).total_seconds()
-
-                        # if collect_metrics:
-                        #     metrics.report_metric('clipper_mc_pred_total', 1)
-                        #     metrics.report_metric('clipper_mc_recv_time_ms',
-                        #                           recv_time * 1000.0)
-                        #     metrics.report_metric('clipper_mc_parse_time_ms',
-                        #                           parse_time * 1000.0)
-                        #     metrics.report_metric('clipper_mc_handle_time_ms',
-                        #                           handle_time * 1000.0)
-                        #     metrics.report_metric(
-                        #         'clipper_mc_end_to_end_latency_ms',
-                        #         (recv_time + parse_time + handle_time) *
-                        #         1000.0)
 
                         print("recv: %f s, parse: %f s, handle: %f s" %
                               (recv_time, parse_time, handle_time))
@@ -646,47 +633,7 @@ class ModelContainerBase(object):
 
 
 class RPCService:
-    def __init__(self, collect_metrics=True, read_config=True):
-        self.collect_metrics = collect_metrics
-        if read_config:
-            self._read_config_from_environment()
-
-    def _read_config_from_environment(self):
-        try:
-            self.model_name = os.environ["CLIPPER_MODEL_NAME"]
-        except KeyError:
-            print(
-                "ERROR: CLIPPER_MODEL_NAME environment variable must be set",
-                file=sys.stdout)
-            sys.exit(1)
-        try:
-            self.model_version = os.environ["CLIPPER_MODEL_VERSION"]
-        except KeyError:
-            print(
-                "ERROR: CLIPPER_MODEL_VERSION environment variable must be set",
-                file=sys.stdout)
-            sys.exit(1)
-
-        self.host = "0.0.0.0"
-        if "CLIPPER_IP" in os.environ:
-            self.host = os.environ["CLIPPER_IP"]
-        else:
-            print("Connecting to Clipper on localhost")
-
-        self.port = 7000
-        if "CLIPPER_PORT" in os.environ:
-            self.port = int(os.environ["CLIPPER_PORT"])
-        else:
-            print("Connecting to Clipper with default port: {port}".format(
-                port=self.port))
-
-        self.input_type = "doubles"
-        if "CLIPPER_INPUT_TYPE" in os.environ:
-            self.input_type = os.environ["CLIPPER_INPUT_TYPE"]
-        else:
-            print("Using default input type: doubles")
-
-        self.model_path = os.environ["CLIPPER_MODEL_PATH"]
+    # def __init__(self):
 
     def get_model_path(self):
         return self.model_path
@@ -701,12 +648,19 @@ class RPCService:
             print("Cannot retrieve message history for inactive RPC service!")
             raise
 
-    def start(self, model):
+    def start(self, model, model_name, model_version, model_path, input_type="doubles", host = "0.0.0.0", port = 7000):
         """
         Args:
             model (object): The loaded model object ready to make predictions.
         """
-
+        self.model_name = model_name
+        self.model_version = model_version
+        # save for ML model
+        self.model_path = model_path
+        self.input_type = input_type
+        self.host = host
+        self.port = port
+        
         try:
             ip = socket.gethostbyname(self.host)
         except socket.error as e:
@@ -719,50 +673,4 @@ class RPCService:
         self.server.model_input_type = string_to_input_type(self.input_type)
         self.server.model = model
 
-        # Create a file named model_is_ready.check to show that model and container
-        # are ready
-        with open("./model_is_ready.check", "w") as f:
-            f.write("READY")
-        # if self.collect_metrics:
-        #     start_metric_server()
-        #     add_metrics()
-
-        self.server.run(collect_metrics=self.collect_metrics)
-
-
-# def add_metrics():
-#     config_file_path = 'metrics_config.yaml'
-
-#     config_file_path = os.path.join(
-#         os.path.split(os.path.realpath(__file__))[0], config_file_path)
-
-#     with open(config_file_path, 'r') as f:
-#         config = yaml.load(f, Loader=yaml.FullLoader)
-#     config = config['Model Container']
-
-#     prefix = 'clipper_{}_'.format(config.pop('prefix'))
-
-#     for name, spec in config.items():
-#         metric_type = spec.get('type')
-#         metric_description = spec.get('description')
-
-#         name = prefix + name
-
-#         if metric_type == 'Histogram' and 'bucket' in spec.keys():
-#             buckets = spec['bucket'] + [float("inf")]
-#             metrics.add_metric(name, metric_type, metric_description, buckets)
-#         else:  # This case include default histogram buckets + all other
-#             metrics.add_metric(name, metric_type, metric_description)
-
-
-# def start_metric_server():
-
-#     DEBUG = False
-#     cmd = ['python', '-m', 'clipper_admin.metrics.server']
-#     if DEBUG:
-#         cmd.append('DEBUG')
-
-#     Popen(cmd)
-
-#     # sleep is necessary because Popen returns immediately
-#     time.sleep(5)
+        self.server.run()

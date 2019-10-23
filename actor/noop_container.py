@@ -1,11 +1,9 @@
 from __future__ import print_function
-import rpc
-import os
+import container_rpc
 import sys
-import numpy as np
 
 
-class NoopContainer(rpc.ModelContainerBase):
+class NoopContainer(container_rpc.ModelContainerBase):
     def __init__(self, prediction="1.0"):
         self.prediction = prediction
 
@@ -30,8 +28,13 @@ class NoopContainer(rpc.ModelContainerBase):
 
 if __name__ == "__main__":
     print("Starting No-Op container")
-    rpc_service = rpc.RPCService()
+    rpc_service = container_rpc.RPCService()
+
     model = NoopContainer()
+    model_name = "noop_container"
+    model_version = 1
+    model_path = "/fake_path"
+
     sys.stdout.flush()
     sys.stderr.flush()
-    rpc_service.start(model)
+    rpc_service.start(model, model_name, model_version, model_path)
