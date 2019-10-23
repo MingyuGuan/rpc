@@ -544,10 +544,6 @@ class Server():
         else:
             return recv_different_lengths()
 
-class Model(object):
-    def predict(self, inputs):
-        pass
-
 class RPCService:
     def get_event_history(self):
         if self.server:
