@@ -27,11 +27,17 @@ if __name__ == "__main__":
     sys.stderr.flush()
     # start rpc service
     rpc_service.start(port)
-    
+
     #connect to container
     rpc_service.connect()
 
     # send first request
     input_type = "doubles"
     inputs = [8.8, 2.4, 5.7]
+    num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)
+
+    #send second request
+    input_type = "strings"
+    inputs = ["7.2", "hello", "byebye"]
     rpc_service.send_prediction_request(input_type, inputs)
+

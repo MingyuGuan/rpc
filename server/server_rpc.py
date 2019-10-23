@@ -51,7 +51,7 @@ BYTES_PER_LONG = 8
 
 # Initial size of the buffer used for sending response and receiving
 # request input content
-INITIAL_INPUT_CONTENT_BUFFER_SIZE = 1024
+INITIAL_CONTENT_BUFFER_SIZE = 1024
 # Initial size of the buffers used for sending response
 # header data and receiving request header data
 INITIAL_HEADER_BUFFER_SIZE = 1024
@@ -273,6 +273,10 @@ class Server():
         # unique identifier for each msg
         self.msg_id = 0
 
+        self.output_header_buffer = bytearray(INITIAL_HEADER_BUFFER_SIZE)
+        self.output_content_buffer = bytearray(
+            INITIAL_CONTENT_BUFFER_SIZE)
+
     def validate_rpc_version(self, received_version):
         if received_version != RPC_VERSION:
             print(
@@ -313,10 +317,91 @@ class Server():
         return request
 
     def send_prediction_request(self, input_type, inputs):
+        t1 = datetime.now()
         request = self._get_prediction_request(input_type, inputs)
         request.send(self.socket, self.event_history)
 
-    def recv_prediction_response(self):
+        # recv result
+        t2 = datetime.now()
+        self.socket.recv()
+        msg_type_bytes = self.socket.recv()
+        msg_type = struct.unpack("<I", msg_type_bytes)[0]
+
+        if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
+            msg_id_bytes = self.socket.recv()
+            msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
+            print("Got response for request message %d " % msg_id)
+
+            output_header_size_raw = self.socket.recv()
+            output_header_size_bytes = struct.unpack(
+                "<Q", output_header_size_raw)[0]
+
+            typed_output_header_size = int(
+                output_header_size_bytes /
+                BYTES_PER_LONG)
+
+            # adjust output buffer size
+            if len(self.output_header_buffer
+                   ) < output_header_size_bytes:
+                self.ourput_header_buffer = bytearray(
+                    output_header_size_bytes * 2)
+
+            # While this procedure still incurs a copy, it saves a potentially
+            # costly memory allocation by ZMQ. This savings only occurs
+            # if the output header did not have to be resized
+            output_header_view = memoryview(
+                self.output_header_buffer)[:output_header_size_bytes]
+            output_header_content = self.socket.recv(copy=False).buffer
+            output_header_view[:
+                              output_header_size_bytes] = output_header_content
+
+            parsed_output_header = np.frombuffer(
+                self.output_header_buffer,
+                dtype=INPUT_HEADER_DTYPE)[:typed_output_header_size]
+
+            # output_type should always be string
+            num_outputs, output_sizes = parsed_output_header[
+                0], parsed_output_header[1:]
+
+            print("recv %d output response" % num_outputs)
+            output_sizes = [
+                int(output_size) for output_size in output_sizes
+            ]
+
+            outputs = self.recv_outputs_content(num_outputs, output_sizes)
+
+            t3 = datetime.now()
+            send_time = (t2 - t1).total_seconds()
+            recv_time = (t3 - t2).total_seconds()
+            print("send: %f s, recv: %f s" %
+                              (send_time, recv_time))
+            print("outputs:")
+            print(' '.join(outputs))
+            return outputs, num_outputs
+        else:
+            print("Wrong message type %d, should be container content msg" % msg_type)
+            raise
+
+    def recv_outputs_content(self, num_outputs, output_sizes):
+        # # Create an empty numpy array that will contain
+        # # output string references
+        # outputs = [np.empty(num_outputs, dtype=object)]
+        # for i in range(num_outputs):
+        #     # Obtain a memoryview of the received message's
+        #     # ZMQ frame buffer
+        #     output_item_buffer = socket.recv(copy=False).buffer
+        #     # Copy the memoryview content into a string object
+        #     output_str = output_item_buffer.tobytes()
+        #     outputs[i] = output_str
+
+        outputs = []
+        for i in range(num_outputs):
+            output_str = self.socket.recv_string()
+            outputs.append(output_str)
+
+        return outputs          
+
+    def recv_prediction_response(self, msg_id):
         self.socket.recv()
         msg_type_bytes = self.socket.recv()
         msg_type = struct.unpack("<I", msg_type_bytes)[0]
@@ -341,7 +426,7 @@ class Server():
 
         self.input_header_buffer = bytearray(INITIAL_HEADER_BUFFER_SIZE)
         self.input_content_buffer = bytearray(
-            INITIAL_INPUT_CONTENT_BUFFER_SIZE)
+            INITIAL_CONTENT_BUFFER_SIZE)
 
         self.socket = self.context.socket(zmq.REP)
         self.socket.bind(self.server_address)
@@ -383,7 +468,7 @@ class Server():
 
             self.client_meta = ClientMetadata(model_name, model_version, model_input_type, client_rpc_version)
             self.connected = True
-            print("Client Model " + model_name + "is connected")
+            print("Client Model " + model_name + " is connected")
         else:
             print("Wrong message type %d, should be new container msg" % msg_type)
             raise
@@ -484,4 +569,5 @@ class RPCService:
         self.server.connect_to_container() 
 
     def send_prediction_request(self, input_type, inputs):
-        self.server.send_prediction_request(input_type, inputs)
+        # return request result
+        return self.server.send_prediction_request(input_type, inputs)
