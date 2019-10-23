@@ -1,12 +1,12 @@
 from __future__ import print_function
-import server_rpc
+import client_rpc
 import os
 import sys
 import numpy as np
 
 if __name__ == "__main__":
     print("Starting RPC server..")
-    rpc_service = server_rpc.RPCService()
+    rpc_service = client_rpc.RPCService()
     port = 7000
 
     sys.stdout.flush()

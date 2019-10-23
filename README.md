@@ -1,12 +1,18 @@
 # rpc
 A workplace for developing rpc communication service between server and containers
 
-# start server
+# build docker image for contanier
 ```
-python server_test.py
+cd container/
+docker build --tag noop-container-app .
 ```
 
-# start contanier
+# run docker image
 ```
-python noop_container.py
+docker run --name noop-container --env-file env.list -p 7000:7000 noop-container-app
+```
+
+# start rpc client(another terminal)
+```
+python client_test.py
 ```

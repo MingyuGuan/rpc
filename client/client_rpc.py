@@ -262,11 +262,11 @@ class ClientMetadata():
         self.model_input_type = model_input_type
         self.client_rpc_version = client_rpc_version
 
-class Server():
-    def __init__(self, context, server_ip, server_port):
+class Client():
+    def __init__(self, context, client_ip, client_port):
         self.context = context
-        self.server_ip = server_ip
-        self.server_port = server_port
+        self.client_ip = client_ip
+        self.client_port = client_port
         self.event_history = EventHistory(EVENT_HISTORY_BUFFER_SIZE)
         # bool: whether a container is connected
         self.connected = False
@@ -419,8 +419,8 @@ class Server():
     
     def connect_to_container(self):
         print("Connecting to container...")
-        self.server_address = "tcp://{0}:{1}".format(self.server_ip,
-                                                 self.server_port)
+        self.client_address = "tcp://{0}:{1}".format(self.client_ip,
+                                                 self.client_port)
         sys.stdout.flush()
         sys.stderr.flush()
 
@@ -429,7 +429,7 @@ class Server():
             INITIAL_CONTENT_BUFFER_SIZE)
 
         self.socket = self.context.socket(zmq.REP)
-        self.socket.bind(self.server_address)
+        self.socket.connect(self.client_address)
 
         # recv heartbeat from container
         self.socket.recv()
@@ -546,24 +546,24 @@ class Server():
 
 class RPCService:
     def get_event_history(self):
-        if self.server:
-            return self.server.get_event_history()
+        if self.client:
+            return self.client.get_event_history()
         else:
             print("Cannot retrieve message history for inactive RPC service!")
             raise
 
-    def start(self, server_port, server_ip = "127.0.0.1", input_type="doubles"):
+    def start(self, client_port, client_ip = "127.0.0.1", input_type="doubles"):
         try:
-            ip = socket.gethostbyname(server_ip)
+            ip = socket.gethostbyname(client_ip)
         except socket.error as e:
             print("Error resolving %s: %s" % (self.host, e))
             sys.exit(1)
         context = zmq.Context()
-        self.server = Server(context, ip, server_port)
+        self.client = Client(context, ip, client_port)
 
     def connect(self):
-        self.server.connect_to_container() 
+        self.client.connect_to_container() 
 
     def send_prediction_request(self, input_type, inputs):
         # return request result
-        return self.server.send_prediction_request(input_type, inputs)
+        return self.client.send_prediction_request(input_type, inputs)

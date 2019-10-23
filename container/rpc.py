@@ -8,7 +8,7 @@ from datetime import datetime
 import socket
 import sys
 import os
-import yaml
+# import yaml
 import logging
 from collections import deque
 if sys.version_info < (3, 0):
@@ -224,7 +224,7 @@ class Server():
         while True:
             socket = self.context.socket(zmq.REQ)
             # poller.register(socket, zmq.POLLIN)
-            socket.connect(clipper_address)
+            socket.bind(clipper_address)
             self.send_heartbeat(socket)
             while True:
             #     receivable_sockets = dict(
@@ -667,7 +667,7 @@ class RPCService:
                 file=sys.stdout)
             sys.exit(1)
 
-        self.host = "127.0.0.1"
+        self.host = "0.0.0.0"
         if "CLIPPER_IP" in os.environ:
             self.host = os.environ["CLIPPER_IP"]
         else:
@@ -730,39 +730,39 @@ class RPCService:
         self.server.run(collect_metrics=self.collect_metrics)
 
 
-def add_metrics():
-    config_file_path = 'metrics_config.yaml'
+# def add_metrics():
+#     config_file_path = 'metrics_config.yaml'
 
-    config_file_path = os.path.join(
-        os.path.split(os.path.realpath(__file__))[0], config_file_path)
+#     config_file_path = os.path.join(
+#         os.path.split(os.path.realpath(__file__))[0], config_file_path)
 
-    with open(config_file_path, 'r') as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
-    config = config['Model Container']
+#     with open(config_file_path, 'r') as f:
+#         config = yaml.load(f, Loader=yaml.FullLoader)
+#     config = config['Model Container']
 
-    prefix = 'clipper_{}_'.format(config.pop('prefix'))
+#     prefix = 'clipper_{}_'.format(config.pop('prefix'))
 
-    for name, spec in config.items():
-        metric_type = spec.get('type')
-        metric_description = spec.get('description')
+#     for name, spec in config.items():
+#         metric_type = spec.get('type')
+#         metric_description = spec.get('description')
 
-        name = prefix + name
+#         name = prefix + name
 
-        if metric_type == 'Histogram' and 'bucket' in spec.keys():
-            buckets = spec['bucket'] + [float("inf")]
-            metrics.add_metric(name, metric_type, metric_description, buckets)
-        else:  # This case include default histogram buckets + all other
-            metrics.add_metric(name, metric_type, metric_description)
+#         if metric_type == 'Histogram' and 'bucket' in spec.keys():
+#             buckets = spec['bucket'] + [float("inf")]
+#             metrics.add_metric(name, metric_type, metric_description, buckets)
+#         else:  # This case include default histogram buckets + all other
+#             metrics.add_metric(name, metric_type, metric_description)
 
 
-def start_metric_server():
+# def start_metric_server():
 
-    DEBUG = False
-    cmd = ['python', '-m', 'clipper_admin.metrics.server']
-    if DEBUG:
-        cmd.append('DEBUG')
+#     DEBUG = False
+#     cmd = ['python', '-m', 'clipper_admin.metrics.server']
+#     if DEBUG:
+#         cmd.append('DEBUG')
 
-    Popen(cmd)
+#     Popen(cmd)
 
-    # sleep is necessary because Popen returns immediately
-    time.sleep(5)
+#     # sleep is necessary because Popen returns immediately
+#     time.sleep(5)
