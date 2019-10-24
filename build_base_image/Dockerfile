@@ -4,7 +4,7 @@ COPY . /app
 
 WORKDIR /app
 
-RUN apk update && apk add build-base libzmq musl-dev python3 python3-dev zeromq-dev
+RUN apk update && apk add build-base jpeg-dev zlib-dev libzmq musl-dev python3 python3-dev zeromq-dev
 
 RUN pip3 install -r requirements.txt
 

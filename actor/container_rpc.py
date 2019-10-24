@@ -10,6 +10,7 @@ import sys
 import os
 # import yaml
 import logging
+import base64
 from collections import deque
 if sys.version_info < (3, 0):
     from subprocess32 import Popen, PIPE
@@ -26,6 +27,7 @@ INPUT_TYPE_INTS = 1
 INPUT_TYPE_FLOATS = 2
 INPUT_TYPE_DOUBLES = 3
 INPUT_TYPE_STRINGS = 4
+INPUT_TYPE_IMAGES = 5
 
 REQUEST_TYPE_PREDICT = 0
 REQUEST_TYPE_FEEDBACK = 1
@@ -71,6 +73,7 @@ def string_to_input_type(input_str):
     float_strs = ["f", "floats", "float"]
     double_strs = ["d", "doubles", "double"]
     string_strs = ["s", "strings", "string", "strs", "str"]
+    image_strs = ["img", "images", "image", "imgs"]
 
     if any(input_str == s for s in byte_strs):
         return INPUT_TYPE_BYTES
@@ -82,6 +85,8 @@ def string_to_input_type(input_str):
         return INPUT_TYPE_DOUBLES
     elif any(input_str == s for s in string_strs):
         return INPUT_TYPE_STRINGS
+    elif any(input_str == s for s in image_strs):
+        return INPUT_TYPE_IMAGES
     else:
         return -1
 
@@ -95,7 +100,7 @@ def input_type_to_dtype(input_type):
         return np.dtype(np.float32)
     elif input_type == INPUT_TYPE_DOUBLES:
         return np.dtype(np.float64)
-    elif input_type == INPUT_TYPE_STRINGS:
+    elif input_type == INPUT_TYPE_STRINGS or input_type == INPUT_TYPE_IMAGES:
         return str
 
 
@@ -110,6 +115,8 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
+    elif input_type == INPUT_TYPE_IMAGES:
+        return "images"
 
 
 class EventHistory:
@@ -196,7 +203,7 @@ class Server():
             return self.model.predict_doubles
         elif self.model_input_type == INPUT_TYPE_BYTES:
             return self.model.predict_bytes
-        elif self.model_input_type == INPUT_TYPE_STRINGS:
+        elif self.model_input_type == INPUT_TYPE_STRINGS or self.model_input_type == INPUT_TYPE_IMAGES:
             return self.model.predict_strings
         else:
             print(
@@ -333,6 +340,9 @@ class Server():
                         if input_type == INPUT_TYPE_STRINGS:
                             inputs = self.recv_string_content(
                                 socket, num_inputs, input_sizes)
+                        if input_type == INPUT_TYPE_IMAGES:
+                            inputs = self.recv_image_content(
+                                socket, num_inputs, input_sizes)
                         else:
                             inputs = self.recv_primitive_content(
                                 socket, num_inputs, input_sizes, input_dtype)
@@ -388,10 +398,24 @@ class Server():
             # ZMQ frame buffer
             input_item_buffer = socket.recv(copy=False).buffer
             # Copy the memoryview content into a string object
-            input_str = input_item_buffer.tobytes()
+            input_str = bytearray(input_item_buffer.tobytes())
             inputs[i] = input_str
 
         return inputs
+
+    def recv_image_content(self, socket, num_inputs, input_sizes):
+       # Create an empty numpy array that will contain
+        # input string references
+        inputs = np.empty(num_inputs, dtype=object)
+        for i in range(num_inputs):
+            # Obtain a memoryview of the received message's
+            # ZMQ frame buffer
+            input_item_buffer = socket.recv(copy=False).buffer
+            # Copy the memoryview content into a string object
+            input_str = bytearray(base64.b64decode(input_item_buffer.tobytes()))
+            inputs[i] = input_str
+
+        return inputs 
 
     def recv_primitive_content(self, socket, num_inputs, input_sizes,
                                input_dtype):
@@ -633,7 +657,9 @@ class ModelContainerBase(object):
 
 
 class RPCService:
-    # def __init__(self):
+    def __init__(self, model_path, input_type):
+        self.model_path = model_path
+        self.input_type = input_type
 
     def get_model_path(self):
         return self.model_path
@@ -648,16 +674,13 @@ class RPCService:
             print("Cannot retrieve message history for inactive RPC service!")
             raise
 
-    def start(self, model, model_name, model_version, model_path, input_type="doubles", host = "0.0.0.0", port = 7000):
+    def start(self, model, model_name, model_version, host = "0.0.0.0", port = 7000):
         """
         Args:
             model (object): The loaded model object ready to make predictions.
         """
         self.model_name = model_name
         self.model_version = model_version
-        # save for ML model
-        self.model_path = model_path
-        self.input_type = input_type
         self.host = host
         self.port = port
         

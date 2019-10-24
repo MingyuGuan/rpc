@@ -3,6 +3,7 @@ import actor_rpc
 import os
 import sys
 import numpy as np
+import base64
 
 if __name__ == "__main__":
     print("Starting RPC actor..")
@@ -18,6 +19,9 @@ if __name__ == "__main__":
     rpc_service.connect()
 
     # send first request
-    input_type = "doubles"
-    inputs = [8.8, 2.4, 5.7]
+    input_type = "imgs"
+    img1 = base64.b64encode(open("dog.jpg", "rb").read())
+    img2 = base64.b64encode(open("cat.jpg", "rb").read())
+
+    inputs = [img1, img2]
     num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)

@@ -23,6 +23,7 @@ INPUT_TYPE_INTS = 1
 INPUT_TYPE_FLOATS = 2
 INPUT_TYPE_DOUBLES = 3
 INPUT_TYPE_STRINGS = 4
+INPUT_TYPE_IMAGES = 5
 
 REQUEST_TYPE_PREDICT = 0
 REQUEST_TYPE_FEEDBACK = 1
@@ -67,6 +68,7 @@ def string_to_input_type(input_str):
     float_strs = ["f", "floats", "float"]
     double_strs = ["d", "doubles", "double"]
     string_strs = ["s", "strings", "string", "strs", "str"]
+    image_strs = ["img", "images", "image", "imgs"]
 
     if any(input_str == s for s in byte_strs):
         return INPUT_TYPE_BYTES
@@ -78,6 +80,8 @@ def string_to_input_type(input_str):
         return INPUT_TYPE_DOUBLES
     elif any(input_str == s for s in string_strs):
         return INPUT_TYPE_STRINGS
+    elif any(input_str == s for s in image_strs):
+        return INPUT_TYPE_IMAGES
     else:
         return -1
 
@@ -91,7 +95,7 @@ def input_type_to_dtype(input_type):
         return np.dtype(np.float32)
     elif input_type == INPUT_TYPE_DOUBLES:
         return np.dtype(np.float64)
-    elif input_type == INPUT_TYPE_STRINGS:
+    elif input_type == INPUT_TYPE_STRINGS or input_type == INPUT_TYPE_IMAGES:
         return str
 
 
@@ -106,6 +110,8 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
+    elif input_type == INPUT_TYPE_IMAGES:
+        return "images"
 
 class EventHistory:
     def __init__(self, size):
@@ -191,11 +197,15 @@ class PredictionRequest:
                 # this is the last input being sent
                 if self.input_type == INPUT_TYPE_STRINGS:
                     socket.send_string(self.inputs[idx])
+                elif self.input_type == INPUT_TYPE_IMAGES:
+                    socket.send(self.inputs[idx])
                 else:
                     socket.send(self._format_input(self.inputs[idx]))
             else:
                 if self.input_type == INPUT_TYPE_STRINGS:
                     socket.send_string(self.inputs[idx], flags=zmq.SNDMORE)
+                elif self.input_type == INPUT_TYPE_IMAGES:
+                    socket.send(self.inputs[idx], flags=zmq.SNDMORE)
                 else:
                     socket.send(self._format_input(self.inputs[idx]), flags=zmq.SNDMORE)
 
@@ -245,7 +255,7 @@ class PredictionRequest:
                          self.num_inputs)
         header_idx += BYTES_PER_LONG
         for inp in self.inputs:
-            if isinstance(inp, str):
+            if isinstance(inp, str) or isinstance(inp, bytes):
                 struct.pack_into("<Q", PredictionRequest.header_buffer,
                              header_idx, len(inp))
             else:
@@ -293,10 +303,8 @@ class Actor():
         self.socket.send(struct.pack("<I", MESSAGE_TYPE_HEARTBEAT), zmq.SNDMORE)
         if not self.connected:
             self.socket.send(struct.pack("<I", HEARTBEAT_TYPE_REQUEST_CONTAINER_METADATA))
-            print("Sent heartbeat type " + str(HEARTBEAT_TYPE_REQUEST_CONTAINER_METADATA))
         else:
             self.socket.send(struct.pack("<I", HEARTBEAT_TYPE_KEEPALIVE))
-            print("Sent heartbeat type " + str(HEARTBEAT_TYPE_KEEPALIVE))
         self.event_history.insert(EVENT_HISTORY_SENT_HEARTBEAT)
 
     def get_event_history(self):
@@ -363,7 +371,6 @@ class Actor():
             num_outputs, output_sizes = parsed_output_header[
                 0], parsed_output_header[1:]
 
-            print("recv %d output response" % num_outputs)
             output_sizes = [
                 int(output_size) for output_size in output_sizes
             ]
@@ -375,8 +382,8 @@ class Actor():
             recv_time = (t3 - t2).total_seconds()
             print("send: %f s, recv: %f s" %
                               (send_time, recv_time))
-            print("outputs:")
-            print(' '.join(outputs))
+            print("OUTPUTS:")
+            print('\n'.join(outputs))
             return outputs, num_outputs
         else:
             print("Wrong message type %d, should be container content msg" % msg_type)
@@ -439,7 +446,6 @@ class Actor():
         # send heartbeat response to ask for container metadata
         if msg_type == MESSAGE_TYPE_HEARTBEAT:
             self.event_history.insert(EVENT_HISTORY_RECEIVED_HEARTBEAT)
-            print("Received heartbeat!")
             sys.stdout.flush()
             sys.stderr.flush()
             if self.connected:
