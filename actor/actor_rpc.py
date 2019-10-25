@@ -320,6 +320,7 @@ class Actor():
                 try:
                     df_contents = StringIO(
                         str.encode(
+                            #"FROM {container_name}\n{run_command}\n COPY {prediction_file} __init__.py pytorch_utils.py container_rpc.py /model/\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
                             "FROM {container_name}\n{run_command}\n COPY {model_path} /model\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
                             #"FROM {container_name}\n{run_command}\n COPY [ \"{prediction_file}\", \"__init__.py\", \"pytorch_utils.py\", \"container_rpc.py\", \"/model/\" ]\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
                             format(
@@ -463,8 +464,8 @@ class Actor():
             t3 = datetime.now()
             send_time = (t2 - t1).total_seconds()
             recv_time = (t3 - t2).total_seconds()
-            print("send: %f s, recv: %f s" %
-                              (send_time, recv_time))
+            # print("send: %f s, recv: %f s" %
+                              # (send_time, recv_time))
             print("\nOUTPUTS:")
             print('\n'.join(outputs))
             return outputs, num_outputs

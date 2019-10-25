@@ -3,9 +3,11 @@ import actor_rpc
 import os
 import sys
 import numpy as np
+import matplotlib.pyplot as plt
 import base64
 import docker
 import time
+from datetime import datetime
 
 if __name__ == "__main__":
     print("Starting RPC actor..")
@@ -37,9 +39,6 @@ if __name__ == "__main__":
     rpc_service.run_container(docker_client, image, detach=True, ports=ports)
     print("{} is is running..".format(name))
 
-    # # wait container running stablely
-    # time.sleep(5)
-
     print("Connecting to conatiner...")
     #connect to container
     rpc_service.connect_to_container()
@@ -52,3 +51,22 @@ if __name__ == "__main__":
 
     inputs = [img1, img2]
     num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)
+
+    print("Sending 100 request to plot cdf..")
+    time_arr = []
+    inputs = [img1]
+    for i in range(100):
+        t1 = datetime.now()
+        num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)
+        t2 = datetime.now()
+        time = (t2 - t1).total_seconds()
+        time_arr.append(time)
+
+    sorted_data = np.sort(time_arr)
+    yvals=np.arange(len(sorted_data))/float(len(sorted_data)-1)
+
+    plt.xlabel('time(s)')
+    plt.ylabel('CDF')
+    plt.plot(sorted_data,yvals)
+
+    plt.show()
