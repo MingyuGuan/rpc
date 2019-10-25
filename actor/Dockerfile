@@ -6,4 +6,4 @@ WORKDIR /app
 
 EXPOSE 7000
 
-CMD [ "python3", "./noop_container.py" ]
+CMD [ "python3", "./pytorch_container.py" ]
