@@ -13,8 +13,16 @@ import logging
 from collections import deque
 if sys.version_info < (3, 0):
     from subprocess32 import Popen, PIPE
+    try:
+        from cStringIO import StringIO
+    except ImportError:
+        from StringIO import StringIO
 else:
     from subprocess import Popen, PIPE
+    from io import BytesIO as StringIO
+import docker
+import tempfile
+import tarfile
 
 RPC_VERSION = 3
 
@@ -287,6 +295,82 @@ class Actor():
         self.output_content_buffer = bytearray(
             INITIAL_CONTENT_BUFFER_SIZE)
 
+    def build_model(self, docker_client, 
+                    name,
+                    version,
+                    model_path,
+                    prediction_file,
+                    port=7000,
+                    base_image="alice97/serve-base",
+                    container_registry=None,
+                    pkgs_to_install=None):
+        version = str(version)
+        run_cmd = ''
+        if pkgs_to_install:
+            run_as_lst = 'RUN pip install'.split(' ')
+            run_cmd = ' '.join(run_as_lst + pkgs_to_install)
+        with tempfile.NamedTemporaryFile(mode="w+b", suffix="tar") as context_file:
+            # Create build context tarfile
+            with tarfile.TarFile(fileobj=context_file, mode="w") as context_tar:
+                context_tar.add(model_path)
+                # context_tar.addfile(tarfile.TarInfo(prediction_file), open(prediction_file))
+                # context_tar.addfile(tarfile.TarInfo("__init__.py"), open("__init__.py"))
+                # context_tar.addfile(tarfile.TarInfo("pytorch_utils.py"), open("pytorch_utils.py"))
+                # context_tar.addfile(tarfile.TarInfo("container_rpc.py"), open("container_rpc.py"))
+                try:
+                    df_contents = StringIO(
+                        str.encode(
+                            "FROM {container_name}\n{run_command}\n COPY {model_path} /model\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
+                            #"FROM {container_name}\n{run_command}\n COPY [ \"{prediction_file}\", \"__init__.py\", \"pytorch_utils.py\", \"container_rpc.py\", \"/model/\" ]\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
+                            format(
+                                container_name=base_image,
+                                model_path=model_path,
+                                prediction_file=prediction_file,
+                                run_command=run_cmd,
+                                port=port)))
+                    df_tarinfo = tarfile.TarInfo('Dockerfile')
+                    df_contents.seek(0, os.SEEK_END)
+                    df_tarinfo.size = df_contents.tell()
+                    df_contents.seek(0)
+                    context_tar.addfile(df_tarinfo, df_contents)
+                except TypeError:
+                    df_contents = StringIO(
+                        "FROM {container_name}\n{run_command}\n COPY {model_path} /model\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
+                        format(
+                            container_name=base_image,
+                            model_path=model_path,
+                            prediction_file=prediction_file,
+                            run_command=run_cmd,
+                            port=port))
+                    df_tarinfo = tarfile.TarInfo('Dockerfile')
+                    df_contents.seek(0, os.SEEK_END)
+                    df_tarinfo.size = df_contents.tell()
+                    df_contents.seek(0)
+                    context_tar.addfile(df_tarinfo, df_contents)
+            # Exit Tarfile context manager to finish the tar file
+            # Seek back to beginning of file for reading
+            context_file.seek(0)
+            image = "{name}:{version}".format(
+                name=name, version=version)
+            image_result, build_logs = docker_client.images.build(fileobj=context_file, custom_context=True, tag=image)
+
+        return image
+
+    def run_container(self, docker_client, image, detach=True, cmd=None, name=None, ports=None,
+                    labels=None, environment=None, log_config=None, volumes=None,
+                    user=None):
+        return docker_client.containers.run(
+            image,
+            detach=True,
+            command=cmd,
+            name=name,
+            ports=ports,
+            labels=labels,
+            environment=environment,
+            volumes=volumes,
+            user=user,
+            log_config=log_config)
+
     def validate_rpc_version(self, received_version):
         if received_version != RPC_VERSION:
             print(
@@ -338,7 +422,6 @@ class Actor():
         if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
             msg_id_bytes = self.socket.recv()
             msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
-            print("Got response for request message %d " % msg_id)
 
             output_header_size_raw = self.socket.recv()
             output_header_size_bytes = struct.unpack(
@@ -382,7 +465,7 @@ class Actor():
             recv_time = (t3 - t2).total_seconds()
             print("send: %f s, recv: %f s" %
                               (send_time, recv_time))
-            print("OUTPUTS:")
+            print("\nOUTPUTS:")
             print('\n'.join(outputs))
             return outputs, num_outputs
         else:
@@ -416,7 +499,6 @@ class Actor():
         if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
             msg_id_bytes = socket.recv()
             msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
-            print("Got response for request message %d " % msg_id)
             # list of byte arrays
             response_header = socket.recv()
             response_type = struct.unpack("<I", response_header)[0]
@@ -425,7 +507,6 @@ class Actor():
                 pass
     
     def connect_to_container(self):
-        print("Connecting to container...")
         self.actor_address = "tcp://{0}:{1}".format(self.actor_ip,
                                                  self.actor_port)
         sys.stdout.flush()
@@ -567,9 +648,39 @@ class RPCService:
         context = zmq.Context()
         self.actor = Actor(context, ip, actor_port)
 
-    def connect(self):
+    def connect_to_container(self):
         self.actor.connect_to_container() 
 
     def send_prediction_request(self, input_type, inputs):
         # return request result
         return self.actor.send_prediction_request(input_type, inputs)
+
+    def build_model(self, docker_client, name, version, model_path, prediction_file,
+                    port=7000, base_image="alice97/serve-base", container_registry=None,
+                    pkgs_to_install=None):
+        return self.actor.build_model(
+                docker_client, 
+                name,
+                version,
+                model_path,
+                prediction_file,
+                port=7000,
+                base_image="alice97/serve-base",
+                container_registry=None,
+                pkgs_to_install=None)
+
+    def run_container(self, docker_client, image, detach=True, cmd=None, name=None, ports=None,
+                    labels=None, environment=None, log_config=None, volumes=None,
+                    user=None):
+        return self.actor.run_container(
+                docker_client,
+                image,
+                detach=True,
+                cmd=cmd,
+                name=name,
+                ports=ports,
+                labels=labels,
+                environment=environment,
+                volumes=volumes,
+                user=user,
+                log_config=log_config)
