@@ -13,11 +13,13 @@ if __name__ == "__main__":
     print("Starting RPC actor..")
     sys.stdout.flush()
     sys.stderr.flush()
-    rpc_service = actor_rpc.RPCService()
+
     # start rpc service
+    rpc_service = actor_rpc.RPCService()
     port = 7000
     rpc_service.start(port)
 
+    # deploy container
     print("Building and Deploying Container")
     name = "pytorch_container"
     version = 1
@@ -39,34 +41,47 @@ if __name__ == "__main__":
     rpc_service.run_container(docker_client, image, detach=True, ports=ports)
     print("{} is is running..".format(name))
 
+    # connect to container
     print("Connecting to conatiner...")
-    #connect to container
     rpc_service.connect_to_container()
 
-    print("\nSending a request with inputs: dog.jpg, cat.jpg")
     # send first request
+    print("\nSending a request with inputs: dog.jpg, cat.jpg")
     input_type = "imgs"
     img1 = base64.b64encode(open("images/dog.jpg", "rb").read())
     img2 = base64.b64encode(open("images/cat.jpg", "rb").read())
 
     inputs = [img1, img2]
-    num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)
+    outputs, num_outputs = rpc_service.send_prediction_request(input_type, inputs)
 
-    print("Sending 100 request to plot cdf..")
-    time_arr = []
-    inputs = [img1]
-    for i in range(100):
-        t1 = datetime.now()
-        num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)
-        t2 = datetime.now()
-        time = (t2 - t1).total_seconds()
-        time_arr.append(time)
+    print("\nOUTPUTS:")
+    print('\n'.join(outputs))
 
-    sorted_data = np.sort(time_arr)
-    yvals=np.arange(len(sorted_data))/float(len(sorted_data)-1)
+    # stop contaienr
+    print("\nStopping container..")
+    rpc_service.stop_container()
+    print("Successfully quit")
 
-    plt.xlabel('time(s)')
-    plt.ylabel('CDF')
-    plt.plot(sorted_data,yvals)
+    # print("\nSending 200 request to plot cdf..")
+    # time_arr = []
+    # inputs = [img1]
+    # for i in range(200):
+    #     t1 = datetime.now()
+    #     num_outputs, outputs = rpc_service.send_prediction_request(input_type, inputs)
+    #     t2 = datetime.now()
+    #     latency = (t2 - t1).total_seconds()
+    #     time_arr.append(latency)
+    #     time.sleep(0.01)
 
-    plt.show()
+    # sorted_data = np.sort(time_arr)
+    # yvals=np.arange(len(sorted_data))/float(len(sorted_data)-1)
+
+    # axes = plt.gca()
+    # xmin = 0.1
+    # xmax = 0.7
+    # axes.set_xlim([xmin,xmax])
+    # plt.xlabel('time(s)')
+    # plt.ylabel('CDF')
+    # plt.plot(sorted_data,yvals)
+
+    # plt.show()

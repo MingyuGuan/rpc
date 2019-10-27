@@ -230,37 +230,9 @@ class Server():
 
         while True:
             socket = self.context.socket(zmq.REQ)
-            # poller.register(socket, zmq.POLLIN)
             socket.bind(clipper_address)
             self.send_heartbeat(socket)
             while True:
-            #     receivable_sockets = dict(
-            #         poller.poll(SOCKET_POLLING_TIMEOUT_MILLIS))
-            #     if socket not in receivable_sockets or receivable_sockets[socket] != zmq.POLLIN:
-            #         # Failed to receive a message before the specified polling timeout
-            #         if connected:
-            #             curr_time = datetime.now()
-            #             time_delta = curr_time - last_activity_time_millis
-            #             time_delta_millis = (time_delta.seconds * 1000) + (
-            #                 time_delta.microseconds / 1000)
-            #             if time_delta_millis >= SOCKET_ACTIVITY_TIMEOUT_MILLIS:
-            #                 # Terminate the session
-            #                 print("Connection timed out, reconnecting...")
-            #                 connected = False
-            #                 poller.unregister(socket)
-            #                 socket.close()
-            #                 break
-            #             else:
-            #                 self.send_heartbeat(socket)
-            #             sys.stdout.flush()
-            #             sys.stderr.flush()
-            #         continue
-
-                # Received a message before the polling timeout
-                # if not connected:
-                #     connected = True
-                # last_activity_time_millis = datetime.now()
-
                 t1 = datetime.now()
                 # Receive delimiter between routing identity and content
                 socket.recv()

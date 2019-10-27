@@ -313,16 +313,10 @@ class Actor():
             # Create build context tarfile
             with tarfile.TarFile(fileobj=context_file, mode="w") as context_tar:
                 context_tar.add(model_path)
-                # context_tar.addfile(tarfile.TarInfo(prediction_file), open(prediction_file))
-                # context_tar.addfile(tarfile.TarInfo("__init__.py"), open("__init__.py"))
-                # context_tar.addfile(tarfile.TarInfo("pytorch_utils.py"), open("pytorch_utils.py"))
-                # context_tar.addfile(tarfile.TarInfo("container_rpc.py"), open("container_rpc.py"))
                 try:
                     df_contents = StringIO(
                         str.encode(
-                            #"FROM {container_name}\n{run_command}\n COPY {prediction_file} __init__.py pytorch_utils.py container_rpc.py /model/\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
                             "FROM {container_name}\n{run_command}\n COPY {model_path} /model\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
-                            #"FROM {container_name}\n{run_command}\n COPY [ \"{prediction_file}\", \"__init__.py\", \"pytorch_utils.py\", \"container_rpc.py\", \"/model/\" ]\n WORKDIR /model\n EXPOSE {port}\n CMD [ \"python3\", \"./{prediction_file}\" ]".
                             format(
                                 container_name=base_image,
                                 model_path=model_path,
@@ -360,7 +354,7 @@ class Actor():
     def run_container(self, docker_client, image, detach=True, cmd=None, name=None, ports=None,
                     labels=None, environment=None, log_config=None, volumes=None,
                     user=None):
-        return docker_client.containers.run(
+        self.container = docker_client.containers.run(
             image,
             detach=True,
             command=cmd,
@@ -371,6 +365,9 @@ class Actor():
             volumes=volumes,
             user=user,
             log_config=log_config)
+
+    def stop_container(self):
+        self.container.stop()
 
     def validate_rpc_version(self, received_version):
         if received_version != RPC_VERSION:
@@ -466,25 +463,13 @@ class Actor():
             recv_time = (t3 - t2).total_seconds()
             # print("send: %f s, recv: %f s" %
                               # (send_time, recv_time))
-            print("\nOUTPUTS:")
-            print('\n'.join(outputs))
+                              
             return outputs, num_outputs
         else:
             print("Wrong message type %d, should be container content msg" % msg_type)
             raise
 
     def recv_outputs_content(self, num_outputs, output_sizes):
-        # # Create an empty numpy array that will contain
-        # # output string references
-        # outputs = [np.empty(num_outputs, dtype=object)]
-        # for i in range(num_outputs):
-        #     # Obtain a memoryview of the received message's
-        #     # ZMQ frame buffer
-        #     output_item_buffer = socket.recv(copy=False).buffer
-        #     # Copy the memoryview content into a string object
-        #     output_str = output_item_buffer.tobytes()
-        #     outputs[i] = output_str
-
         outputs = []
         for i in range(num_outputs):
             output_str = self.socket.recv_string()
@@ -561,77 +546,6 @@ class Actor():
             print("Wrong message type %d, should be new container msg" % msg_type)
             raise
 
-    def recv_string_content(self, num_inputs, input_sizes):
-        # Create an empty numpy array that will contain
-        # input string references
-        inputs = np.empty(num_inputs, dtype=object)
-        for i in range(num_inputs):
-            # Obtain a memoryview of the received message's
-            # ZMQ frame buffer
-            input_item_buffer = self.socket.recv(copy=False).buffer
-            # Copy the memoryview content into a string object
-            input_str = input_item_buffer.tobytes()
-            inputs[i] = input_str
-
-        return inputs
-
-    def recv_primitive_content(self, num_inputs, input_sizes,
-                               input_dtype):
-        def recv_different_lengths():
-            # Create an empty numpy array that will contain
-            # input array references
-            inputs = np.empty(num_inputs, dtype=object)
-            for i in range(num_inputs):
-                # Receive input data and copy it into a byte
-                # buffer that can be parsed into a writeable
-                # array
-                input_item_buffer = self.socket.recv(copy=True)
-                input_item = np.frombuffer(
-                    input_item_buffer, dtype=input_dtype)
-                inputs[i] = input_item
-
-            return inputs
-
-        def recv_same_lengths():
-            input_type_size_bytes = input_dtype.itemsize
-            input_content_size_bytes = sum(input_sizes)
-            typed_input_content_size = int(
-                input_content_size_bytes / input_type_size_bytes)
-
-            if len(self.input_content_buffer) < input_content_size_bytes:
-                self.input_content_buffer = bytearray(
-                    input_content_size_bytes * 2)
-
-            input_content_view = memoryview(
-                self.input_content_buffer)[:input_content_size_bytes]
-
-            item_start_idx = 0
-            for i in range(num_inputs):
-                input_size = input_sizes[i]
-                # Obtain a memoryview of the received message's
-                # ZMQ frame buffer
-                input_item_buffer = self.socket.recv(copy=False).buffer
-                # Copy the memoryview content into a pre-allocated content buffer
-                input_content_view[item_start_idx:item_start_idx +
-                                   input_size] = input_item_buffer
-                item_start_idx += input_size
-
-            # Reinterpret the content buffer as a typed numpy array
-            inputs = np.frombuffer(
-                self.input_content_buffer,
-                dtype=input_dtype)[:typed_input_content_size]
-
-            # All inputs are of the same size, so we can use
-            # np.reshape to construct an input matrix
-            inputs = np.reshape(inputs, (len(input_sizes), -1))
-
-            return inputs
-
-        if len(set(input_sizes)) == 1:
-            return recv_same_lengths()
-        else:
-            return recv_different_lengths()
-
 class RPCService:
     def get_event_history(self):
         if self.actor:
@@ -670,10 +584,10 @@ class RPCService:
                 container_registry=None,
                 pkgs_to_install=None)
 
-    def run_container(self, docker_client, image, detach=True, cmd=None, name=None, ports=None,
+    def run_container(self, docker_client, image, name=None, detach=True, cmd=None, ports=None,
                     labels=None, environment=None, log_config=None, volumes=None,
                     user=None):
-        return self.actor.run_container(
+        self.actor.run_container(
                 docker_client,
                 image,
                 detach=True,
@@ -685,3 +599,6 @@ class RPCService:
                 volumes=volumes,
                 user=user,
                 log_config=log_config)
+
+    def stop_container(self):
+        self.actor.stop_container()
