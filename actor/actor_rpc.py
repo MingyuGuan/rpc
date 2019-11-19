@@ -23,6 +23,7 @@ else:
 import docker
 import tempfile
 import tarfile
+import zlib, cPickle as pickle
 
 RPC_VERSION = 3
 
@@ -31,12 +32,14 @@ INPUT_TYPE_INTS = 1
 INPUT_TYPE_FLOATS = 2
 INPUT_TYPE_DOUBLES = 3
 INPUT_TYPE_STRINGS = 4
+INPUT_TYPE_ABSTRACT = 5
 
 OUTPUT_TYPE_BYTES = 0
 OUTPUT_TYPE_INTS = 1
 OUTPUT_TYPE_FLOATS = 2
 OUTPUT_TYPE_DOUBLES = 3
 OUTPUT_TYPE_STRINGS = 4
+OUTPUT_TYPE_ABSTRACT = 5
 
 REQUEST_TYPE_PREDICT = 0
 REQUEST_TYPE_FEEDBACK = 1
@@ -93,7 +96,7 @@ def string_to_input_type(input_str):
     elif any(input_str == s for s in string_strs):
         return INPUT_TYPE_STRINGS
     else:
-        return -1
+        return INPUT_TYPE_ABSTRACT
 
 def input_type_to_dtype(input_type):
     if input_type == INPUT_TYPE_BYTES:
@@ -119,6 +122,8 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
+    else
+        return "abstract"
 
 def string_to_output_type(output_str):
     output_str = output_str.strip().lower()
@@ -139,7 +144,7 @@ def string_to_output_type(output_str):
     elif any(output_str == s for s in string_strs):
         return OUTPUT_TYPE_STRINGS
     else:
-        return -1
+        return OUTPUT_TYPE_ABSTRACT
 
 def output_type_to_dtype(output_type):
     if output_type == OUTPUT_TYPE_BYTES:
@@ -165,6 +170,8 @@ def output_type_to_string(output_type):
         return "doubles"
     elif output_type == OUTPUT_TYPE_STRINGS:
         return "string"
+    else
+        return "abstract"
 
 class EventHistory:
     def __init__(self, size):
@@ -271,6 +278,10 @@ class PredictionRequest:
             return struct.pack("<d", inp)
         elif self.input_type == INPUT_TYPE_STRINGS:
             return inp
+        elif self.input_type == INPUT_TYPE_ABSTRACT:
+            p = pickle.dumps(inp)
+            z = zlib.compress(p)
+            return z
 
     def _expand_buffer_if_necessary(self, size):
         """
@@ -307,6 +318,9 @@ class PredictionRequest:
             if isinstance(inp, str) or isinstance(inp, bytes):
                 struct.pack_into("<Q", PredictionRequest.header_buffer,
                              header_idx, len(inp))
+            elif self.input_type == INPUT_TYPE_ABSTRACT:
+                struct.pack_into("<Q", PredictionRequest.header_buffer,
+                             header_idx, 0) #TODO
             else:
                 struct.pack_into("<Q", PredictionRequest.header_buffer,
                              header_idx, input_type_to_dtype(self.input_type).itemsize)
@@ -526,9 +540,11 @@ class Actor():
                 output_bytes = self.socket.recv()
                 output = struct.unpack("<f", output_bytes)[0]
             elif self.container_meta.model_output_type == OUTPUT_TYPE_BYTES:
-            # else:
                 output_bytes = self.socket.recv()
                 output = struct.unpack("<B", output_bytes)[0]
+            elif self.container_meta.model_output_type == OUTPUT_TYPE_ABSTRACT:
+                output_bytes = self.socket.recv()
+                output = zlib.decompress(output_bytes)
             outputs.append(output)
 
         return outputs

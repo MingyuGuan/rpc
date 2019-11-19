@@ -27,14 +27,14 @@ INPUT_TYPE_INTS = 1
 INPUT_TYPE_FLOATS = 2
 INPUT_TYPE_DOUBLES = 3
 INPUT_TYPE_STRINGS = 4
-# INPUT_TYPE_IMAGES = 5
+INPUT_TYPE_ABSTRACT = 5
 
 OUTPUT_TYPE_BYTES = 0
 OUTPUT_TYPE_INTS = 1
 OUTPUT_TYPE_FLOATS = 2
 OUTPUT_TYPE_DOUBLES = 3
 OUTPUT_TYPE_STRINGS = 4
-# OUTPUT_TYPE_IMAGES = 5
+OUTPUT_TYPE_ABSTRACT = 5
 
 REQUEST_TYPE_PREDICT = 0
 REQUEST_TYPE_FEEDBACK = 1
@@ -76,10 +76,10 @@ logger = logging.getLogger(__name__)
 def string_to_input_type(input_str):
     input_str = input_str.strip().lower()
     byte_strs = ["b", "bytes", "byte"]
-    int_strs = ["i", "ints", "int", "integer", "integers", "builtins.int"]
-    float_strs = ["f", "floats", "float"]
+    int_strs = ["i", "ints", "int", "integer", "integers", "<class \'int\'>"]
+    float_strs = ["f", "floats", "float", "<class \'float\'>"]
     double_strs = ["d", "doubles", "double"]
-    string_strs = ["s", "strings", "string", "strs", "str", "builtins.str"]
+    string_strs = ["s", "strings", "string", "strs", "str", "<class \'str\'>"]
 
     if any(input_str == s for s in byte_strs):
         return INPUT_TYPE_BYTES
@@ -92,7 +92,7 @@ def string_to_input_type(input_str):
     elif any(input_str == s for s in string_strs):
         return INPUT_TYPE_STRINGS
     else:
-        return -1
+        return INPUT_TYPE_ABSTRACT
 
 
 def input_type_to_dtype(input_type):
@@ -119,14 +119,16 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
+    else
+        return "abstract"
 
 def string_to_output_type(output_str):
     output_str = output_str.strip().lower()
     byte_strs = ["b", "bytes", "byte"]
-    int_strs = ["i", "ints", "int", "integer", "integers", "builtins.int"]
-    float_strs = ["f", "floats", "float", "builtins.float"]
+    int_strs = ["i", "ints", "int", "integer", "integers", "<class \'int\'>"]
+    float_strs = ["f", "floats", "float", "<class \'float\'>"]
     double_strs = ["d", "doubles", "double"]
-    string_strs = ["s", "strings", "string", "strs", "str", "builtins.str"]
+    string_strs = ["s", "strings", "string", "strs", "str", "<class \'str\'>"]
 
     if any(output_str == s for s in byte_strs):
         return OUTPUT_TYPE_BYTES
@@ -139,7 +141,7 @@ def string_to_output_type(output_str):
     elif any(output_str == s for s in string_strs):
         return OUTPUT_TYPE_STRINGS
     else:
-        return -1
+        return OUTPUT_TYPE_ABSTRACT
 
 def output_type_to_dtype(output_type):
     if output_type == OUTPUT_TYPE_BYTES:
@@ -165,6 +167,8 @@ def output_type_to_string(output_type):
         return "doubles"
     elif output_type == OUTPUT_TYPE_STRINGS:
         return "string"
+    else
+        return "abstract"
 
 
 class EventHistory:
@@ -341,6 +345,8 @@ class Server():
                         if input_type == INPUT_TYPE_STRINGS:
                             inputs = self.recv_string_content(
                                 socket, num_inputs, input_sizes)
+                        else input_type == INPUT_TYPE_ABSTRACT:
+                            inputs = self.recv_abstract_content(socket, num_inputs)
                         else:
                             inputs = self.recv_primitive_content(
                                 socket, num_inputs, input_sizes, input_dtype)
@@ -388,6 +394,20 @@ class Server():
                 sys.stderr.flush()
 
     def recv_string_content(self, socket, num_inputs, input_sizes):
+        # Create an empty numpy array that will contain
+        # input string references
+        inputs = np.empty(num_inputs, dtype=object)
+        for i in range(num_inputs):
+            # Obtain a memoryview of the received message's
+            # ZMQ frame buffer
+            input_item_buffer = socket.recv(copy=False).buffer
+            # Copy the memoryview content into a string object
+            input_str = bytearray(input_item_buffer.tobytes())
+            inputs[i] = input_str
+
+        return inputs
+
+    def recv_abstract_content(self, socket, num_inputs):
         # Create an empty numpy array that will contain
         # input string references
         inputs = np.empty(num_inputs, dtype=object)
@@ -583,6 +603,10 @@ class PredictionResponse:
             return struct.pack("<d", outp)
         elif self.output_type == OUTPUT_TYPE_STRINGS:
             return outp
+        elif self.output_type == OUTPUT_TYPE_ABSTRACT:
+            p = pickle.dumps(outp)
+            z = zlib.compress(p)
+            return z
 
     def _expand_buffer_if_necessary(self, size):
         """
@@ -616,6 +640,9 @@ class PredictionResponse:
             if isinstance(output, str) or isinstance(output, bytes):
                 struct.pack_into("<Q", PredictionResponse.header_buffer,
                                  header_idx, len(output))
+            elif self.input_type == INPUT_TYPE_ABSTRACT:
+                struct.pack_into("<Q", PredictionResponse.header_buffer,
+                             header_idx, 0) #TODO
             else:
                 struct.pack_into("<Q", PredictionResponse.header_buffer,
                              header_idx, output_type_to_dtype(self.output_type).itemsize)

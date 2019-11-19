@@ -73,8 +73,8 @@ def load_model(model_path):
         arg = FRAMEWORKS[framework]['load'](argName)
       args_list.append(arg)
     model_class = pickle.loads(metadata['prediction_logic'])
-    input_type = metadata['AbstractModelType']['input_type']
-    output_type = metadata['AbstractModelType']['output_type']
+    input_type = str(metadata['AbstractModelType']['input_type'])
+    output_type = str(metadata['AbstractModelType']['output_type'])
     print(input_type)
     print(output_type)
     os.chdir(intial_dir)
@@ -94,7 +94,7 @@ if __name__ == "__main__":
     # pytorch_model = models.squeezenet1_0(pretrained=True)
 
     print("Save prediction function")
-    model_path = "../model_path"
+    model_path = "../transform_model_path"
     model, input_type, output_type = load_model(model_path)
     # model_path = pytorch_utils.save_python_function(predict_torch_model)
     # print("Save pytorch model")
