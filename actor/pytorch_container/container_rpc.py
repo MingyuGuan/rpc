@@ -27,7 +27,14 @@ INPUT_TYPE_INTS = 1
 INPUT_TYPE_FLOATS = 2
 INPUT_TYPE_DOUBLES = 3
 INPUT_TYPE_STRINGS = 4
-INPUT_TYPE_IMAGES = 5
+# INPUT_TYPE_IMAGES = 5
+
+OUTPUT_TYPE_BYTES = 0
+OUTPUT_TYPE_INTS = 1
+OUTPUT_TYPE_FLOATS = 2
+OUTPUT_TYPE_DOUBLES = 3
+OUTPUT_TYPE_STRINGS = 4
+# OUTPUT_TYPE_IMAGES = 5
 
 REQUEST_TYPE_PREDICT = 0
 REQUEST_TYPE_FEEDBACK = 1
@@ -69,11 +76,10 @@ logger = logging.getLogger(__name__)
 def string_to_input_type(input_str):
     input_str = input_str.strip().lower()
     byte_strs = ["b", "bytes", "byte"]
-    int_strs = ["i", "ints", "int", "integer", "integers"]
+    int_strs = ["i", "ints", "int", "integer", "integers", "builtins.int"]
     float_strs = ["f", "floats", "float"]
     double_strs = ["d", "doubles", "double"]
-    string_strs = ["s", "strings", "string", "strs", "str"]
-    image_strs = ["img", "images", "image", "imgs"]
+    string_strs = ["s", "strings", "string", "strs", "str", "builtins.str"]
 
     if any(input_str == s for s in byte_strs):
         return INPUT_TYPE_BYTES
@@ -85,8 +91,6 @@ def string_to_input_type(input_str):
         return INPUT_TYPE_DOUBLES
     elif any(input_str == s for s in string_strs):
         return INPUT_TYPE_STRINGS
-    elif any(input_str == s for s in image_strs):
-        return INPUT_TYPE_IMAGES
     else:
         return -1
 
@@ -100,7 +104,7 @@ def input_type_to_dtype(input_type):
         return np.dtype(np.float32)
     elif input_type == INPUT_TYPE_DOUBLES:
         return np.dtype(np.float64)
-    elif input_type == INPUT_TYPE_STRINGS or input_type == INPUT_TYPE_IMAGES:
+    elif input_type == INPUT_TYPE_STRINGS:
         return str
 
 
@@ -115,8 +119,52 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
-    elif input_type == INPUT_TYPE_IMAGES:
-        return "images"
+
+def string_to_output_type(output_str):
+    output_str = output_str.strip().lower()
+    byte_strs = ["b", "bytes", "byte"]
+    int_strs = ["i", "ints", "int", "integer", "integers", "builtins.int"]
+    float_strs = ["f", "floats", "float", "builtins.float"]
+    double_strs = ["d", "doubles", "double"]
+    string_strs = ["s", "strings", "string", "strs", "str", "builtins.str"]
+
+    if any(output_str == s for s in byte_strs):
+        return OUTPUT_TYPE_BYTES
+    elif any(output_str == s for s in int_strs):
+        return OUTPUT_TYPE_INTS
+    elif any(output_str == s for s in float_strs):
+        return OUTPUT_TYPE_FLOATS
+    elif any(output_str == s for s in double_strs):
+        return OUTPUT_TYPE_DOUBLES
+    elif any(output_str == s for s in string_strs):
+        return OUTPUT_TYPE_STRINGS
+    else:
+        return -1
+
+def output_type_to_dtype(output_type):
+    if output_type == OUTPUT_TYPE_BYTES:
+        return np.dtype(np.int8)
+    elif output_type == OUTPUT_TYPE_INTS:
+        return np.dtype(np.int32)
+    elif output_type == OUTPUT_TYPE_FLOATS:
+        return np.dtype(np.float32)
+    elif output_type == OUTPUT_TYPE_DOUBLES:
+        return np.dtype(np.float64)
+    elif output_type == OUTPUT_TYPE_STRINGS:
+        return str
+
+
+def output_type_to_string(output_type):
+    if output_type == OUTPUT_TYPE_BYTES:
+        return "bytes"
+    elif output_type == OUTPUT_TYPE_INTS:
+        return "ints"
+    elif output_type == OUTPUT_TYPE_FLOATS:
+        return "floats"
+    elif output_type == OUTPUT_TYPE_DOUBLES:
+        return "doubles"
+    elif output_type == OUTPUT_TYPE_STRINGS:
+        return "string"
 
 
 class EventHistory:
@@ -163,8 +211,8 @@ class Server():
             predict response
         """
         predict_fn = self.get_prediction_function()
-        total_length = 0
         outputs = predict_fn(prediction_request.inputs)
+
         # Type check the outputs:
         if not type(outputs) == list:
             raise PredictionError("Model did not return a list")
@@ -172,12 +220,7 @@ class Server():
             raise PredictionError(
                 "Expected model to return %d outputs, found %d outputs" %
                 (len(prediction_request.inputs), len(outputs)))
-        if not type(outputs[0]) == str:
-            raise PredictionError("Model must return a list of strs. Found %s"
-                                  % type(outputs[0]))
-        for o in outputs:
-            total_length += len(o)
-        response = PredictionResponse(prediction_request.msg_id)
+        response = PredictionResponse(prediction_request.msg_id, self.model_output_type)
         for output in outputs:
             response.add_output(output)
 
@@ -195,21 +238,7 @@ class Server():
         return response
 
     def get_prediction_function(self):
-        if self.model_input_type == INPUT_TYPE_INTS:
-            return self.model.predict_ints
-        elif self.model_input_type == INPUT_TYPE_FLOATS:
-            return self.model.predict_floats
-        elif self.model_input_type == INPUT_TYPE_DOUBLES:
-            return self.model.predict_doubles
-        elif self.model_input_type == INPUT_TYPE_BYTES:
-            return self.model.predict_bytes
-        elif self.model_input_type == INPUT_TYPE_STRINGS or self.model_input_type == INPUT_TYPE_IMAGES:
-            return self.model.predict_strings
-        else:
-            print(
-                "Attempted to get predict function for invalid model input type!"
-            )
-            raise
+        return self.model.__call__
 
     def get_event_history(self):
         return self.event_history.get_events()
@@ -308,12 +337,9 @@ class Server():
                         ]
 
                         print("recv request with " + str(num_inputs) + " inputs of " + input_type_to_string(input_type) + " type")
-
+                        print(input_type)
                         if input_type == INPUT_TYPE_STRINGS:
                             inputs = self.recv_string_content(
-                                socket, num_inputs, input_sizes)
-                        if input_type == INPUT_TYPE_IMAGES:
-                            inputs = self.recv_image_content(
                                 socket, num_inputs, input_sizes)
                         else:
                             inputs = self.recv_primitive_content(
@@ -374,20 +400,6 @@ class Server():
             inputs[i] = input_str
 
         return inputs
-
-    def recv_image_content(self, socket, num_inputs, input_sizes):
-       # Create an empty numpy array that will contain
-        # input string references
-        inputs = np.empty(num_inputs, dtype=object)
-        for i in range(num_inputs):
-            # Obtain a memoryview of the received message's
-            # ZMQ frame buffer
-            input_item_buffer = socket.recv(copy=False).buffer
-            # Copy the memoryview content into a string object
-            input_str = bytearray(base64.b64decode(input_item_buffer.tobytes()))
-            inputs[i] = input_str
-
-        return inputs 
 
     def recv_primitive_content(self, socket, num_inputs, input_sizes,
                                input_dtype):
@@ -457,6 +469,7 @@ class Server():
         socket.send_string(self.model_name, zmq.SNDMORE)
         socket.send_string(str(self.model_version), zmq.SNDMORE)
         socket.send_string(str(self.model_input_type), zmq.SNDMORE)
+        socket.send_string(str(self.model_output_type), zmq.SNDMORE)
         socket.send(struct.pack("<I", RPC_VERSION))
         self.event_history.insert(EVENT_HISTORY_SENT_CONTAINER_METADATA)
         print("Sent container metadata!")
@@ -495,7 +508,7 @@ class PredictionRequest:
 class PredictionResponse:
     header_buffer = bytearray(INITIAL_HEADER_BUFFER_SIZE)
 
-    def __init__(self, msg_id):
+    def __init__(self, msg_id, output_type):
         """
         Parameters
         ----------
@@ -506,6 +519,7 @@ class PredictionResponse:
         self.msg_id = msg_id
         self.outputs = []
         self.num_outputs = 0
+        self.output_type = output_type
 
     def add_output(self, output):
         """
@@ -513,8 +527,8 @@ class PredictionResponse:
         ----------
         output : string
         """
-        if not isinstance(output, str):
-            output = str(output)
+        # if not isinstance(output, str):
+        #     output = str(output)
         self.outputs.append(output)
         self.num_outputs += 1
 
@@ -546,11 +560,29 @@ class PredictionResponse:
             if idx == self.num_outputs - 1:
                 # Don't use the `SNDMORE` flag if
                 # this is the last output being sent
-                socket.send_string(self.outputs[idx])
+                if self.output_type == OUTPUT_TYPE_STRINGS:
+                    socket.send_string(self.outputs[idx])
+                else:
+                    socket.send(self._format_output(self.outputs[idx]))
             else:
-                socket.send_string(self.outputs[idx], flags=zmq.SNDMORE)
+                if self.output_type == OUTPUT_TYPE_STRINGS:
+                    socket.send_string(self.outputs[idx], flags=zmq.SNDMORE)
+                else:
+                    socket.send(self._format_output(self.outputs[idx]), flags=zmq.SNDMORE)
 
         event_history.insert(EVENT_HISTORY_SENT_CONTAINER_CONTENT)
+
+    def _format_output(self, outp):
+        if self.output_type == OUTPUT_TYPE_BYTES:
+            return struct.pack("<B", outp)
+        elif self.output_type == OUTPUT_TYPE_INTS:
+            return struct.pack("<I", outp)
+        elif self.output_type == OUTPUT_TYPE_FLOATS:
+            return struct.pack("<f", outp)
+        elif self.output_type == OUTPUT_TYPE_DOUBLES:
+            return struct.pack("<d", outp)
+        elif self.output_type == OUTPUT_TYPE_STRINGS:
+            return outp
 
     def _expand_buffer_if_necessary(self, size):
         """
@@ -581,8 +613,12 @@ class PredictionResponse:
                          self.num_outputs)
         header_idx += BYTES_PER_LONG
         for output in self.outputs:
-            struct.pack_into("<Q", PredictionResponse.header_buffer,
-                             header_idx, len(output))
+            if isinstance(output, str) or isinstance(output, bytes):
+                struct.pack_into("<Q", PredictionResponse.header_buffer,
+                                 header_idx, len(output))
+            else:
+                struct.pack_into("<Q", PredictionResponse.header_buffer,
+                             header_idx, output_type_to_dtype(self.output_type).itemsize)
             header_idx += BYTES_PER_LONG
 
         return PredictionResponse.header_buffer[:header_length], header_length
@@ -611,27 +647,11 @@ class FeedbackResponse():
         socket.send(self.content)
 
 
-class ModelContainerBase(object):
-    def predict_ints(self, inputs):
-        pass
-
-    def predict_floats(self, inputs):
-        pass
-
-    def predict_doubles(self, inputs):
-        pass
-
-    def predict_bytes(self, inputs):
-        pass
-
-    def predict_strings(self, inputs):
-        pass
-
-
 class RPCService:
-    def __init__(self, model_path, input_type):
+    def __init__(self, model_path, input_type, output_type):
         self.model_path = model_path
         self.input_type = input_type
+        self.output_type = output_type
 
     def get_model_path(self):
         return self.model_path
@@ -666,6 +686,7 @@ class RPCService:
         self.server.model_name = self.model_name
         self.server.model_version = self.model_version
         self.server.model_input_type = string_to_input_type(self.input_type)
+        self.server.model_output_type = string_to_output_type(self.output_type)
         self.server.model = model
 
         self.server.run()

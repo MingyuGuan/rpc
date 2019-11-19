@@ -31,7 +31,12 @@ INPUT_TYPE_INTS = 1
 INPUT_TYPE_FLOATS = 2
 INPUT_TYPE_DOUBLES = 3
 INPUT_TYPE_STRINGS = 4
-INPUT_TYPE_IMAGES = 5
+
+OUTPUT_TYPE_BYTES = 0
+OUTPUT_TYPE_INTS = 1
+OUTPUT_TYPE_FLOATS = 2
+OUTPUT_TYPE_DOUBLES = 3
+OUTPUT_TYPE_STRINGS = 4
 
 REQUEST_TYPE_PREDICT = 0
 REQUEST_TYPE_FEEDBACK = 1
@@ -72,11 +77,10 @@ logger = logging.getLogger(__name__)
 def string_to_input_type(input_str):
     input_str = input_str.strip().lower()
     byte_strs = ["b", "bytes", "byte"]
-    int_strs = ["i", "ints", "int", "integer", "integers"]
-    float_strs = ["f", "floats", "float"]
+    int_strs = ["i", "ints", "int", "integer", "integers", "builtins.int"]
+    float_strs = ["f", "floats", "float", "builtins.float"]
     double_strs = ["d", "doubles", "double"]
-    string_strs = ["s", "strings", "string", "strs", "str"]
-    image_strs = ["img", "images", "image", "imgs"]
+    string_strs = ["s", "strings", "string", "strs", "str", "builtins.str"]
 
     if any(input_str == s for s in byte_strs):
         return INPUT_TYPE_BYTES
@@ -88,11 +92,8 @@ def string_to_input_type(input_str):
         return INPUT_TYPE_DOUBLES
     elif any(input_str == s for s in string_strs):
         return INPUT_TYPE_STRINGS
-    elif any(input_str == s for s in image_strs):
-        return INPUT_TYPE_IMAGES
     else:
         return -1
-
 
 def input_type_to_dtype(input_type):
     if input_type == INPUT_TYPE_BYTES:
@@ -103,7 +104,7 @@ def input_type_to_dtype(input_type):
         return np.dtype(np.float32)
     elif input_type == INPUT_TYPE_DOUBLES:
         return np.dtype(np.float64)
-    elif input_type == INPUT_TYPE_STRINGS or input_type == INPUT_TYPE_IMAGES:
+    elif input_type == INPUT_TYPE_STRINGS:
         return str
 
 
@@ -118,8 +119,52 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
-    elif input_type == INPUT_TYPE_IMAGES:
-        return "images"
+
+def string_to_output_type(output_str):
+    output_str = output_str.strip().lower()
+    byte_strs = ["b", "bytes", "byte"]
+    int_strs = ["i", "ints", "int", "integer", "integers", "builtins.int"]
+    float_strs = ["f", "floats", "float", "builtins.float"]
+    double_strs = ["d", "doubles", "double"]
+    string_strs = ["s", "strings", "string", "strs", "str", "builtins.str"]
+
+    if any(output_str == s for s in byte_strs):
+        return OUTPUT_TYPE_BYTES
+    elif any(output_str == s for s in int_strs):
+        return OUTPUT_TYPE_INTS
+    elif any(output_str == s for s in float_strs):
+        return OUTPUT_TYPE_FLOATS
+    elif any(output_str == s for s in double_strs):
+        return OUTPUT_TYPE_DOUBLES
+    elif any(output_str == s for s in string_strs):
+        return OUTPUT_TYPE_STRINGS
+    else:
+        return -1
+
+def output_type_to_dtype(output_type):
+    if output_type == OUTPUT_TYPE_BYTES:
+        return np.dtype(np.int8)
+    elif output_type == OUTPUT_TYPE_INTS:
+        return np.dtype(np.int32)
+    elif output_type == OUTPUT_TYPE_FLOATS:
+        return np.dtype(np.float32)
+    elif output_type == OUTPUT_TYPE_DOUBLES:
+        return np.dtype(np.float64)
+    elif output_type == OUTPUT_TYPE_STRINGS:
+        return str
+
+
+def output_type_to_string(output_type):
+    if output_type == OUTPUT_TYPE_BYTES:
+        return "bytes"
+    elif output_type == OUTPUT_TYPE_INTS:
+        return "ints"
+    elif output_type == OUTPUT_TYPE_FLOATS:
+        return "floats"
+    elif output_type == OUTPUT_TYPE_DOUBLES:
+        return "doubles"
+    elif output_type == OUTPUT_TYPE_STRINGS:
+        return "string"
 
 class EventHistory:
     def __init__(self, size):
@@ -204,15 +249,11 @@ class PredictionRequest:
                 # Don't use the `SNDMORE` flag if
                 # this is the last input being sent
                 if self.input_type == INPUT_TYPE_STRINGS:
-                    socket.send_string(self.inputs[idx])
-                elif self.input_type == INPUT_TYPE_IMAGES:
                     socket.send(self.inputs[idx])
                 else:
                     socket.send(self._format_input(self.inputs[idx]))
             else:
                 if self.input_type == INPUT_TYPE_STRINGS:
-                    socket.send_string(self.inputs[idx], flags=zmq.SNDMORE)
-                elif self.input_type == INPUT_TYPE_IMAGES:
                     socket.send(self.inputs[idx], flags=zmq.SNDMORE)
                 else:
                     socket.send(self._format_input(self.inputs[idx]), flags=zmq.SNDMORE)
@@ -274,10 +315,11 @@ class PredictionRequest:
         return PredictionRequest.header_buffer[:header_length], header_length
 
 class ContainerMetadata():
-    def __init__(self, model_name, model_version, model_input_type, container_rpc_version):
+    def __init__(self, model_name, model_version, model_input_type, model_output_type, container_rpc_version):
         self.model_name = model_name
         self.model_version  = model_version
-        self.model_input_type = model_input_type
+        self.model_input_type = int(model_input_type)
+        self.model_output_type = int(model_output_type)
         self.container_rpc_version = container_rpc_version
 
 class Actor():
@@ -472,25 +514,39 @@ class Actor():
     def recv_outputs_content(self, num_outputs, output_sizes):
         outputs = []
         for i in range(num_outputs):
-            output_str = self.socket.recv_string()
-            outputs.append(output_str)
+            if self.container_meta.model_output_type == OUTPUT_TYPE_STRINGS:
+                output = self.socket.recv_string()
+            elif self.container_meta.model_output_type == OUTPUT_TYPE_INTS:
+                output_bytes = self.socket.recv()
+                output = struct.unpack("<I", output_bytes)[0]
+            elif self.container_meta.model_output_type == OUTPUT_TYPE_DOUBLES:
+                output_bytes = self.socket.recv()
+                output = struct.unpack("<d", output_bytes)[0]
+            elif self.container_meta.model_output_type == OUTPUT_TYPE_FLOATS:
+                output_bytes = self.socket.recv()
+                output = struct.unpack("<f", output_bytes)[0]
+            elif self.container_meta.model_output_type == OUTPUT_TYPE_BYTES:
+            # else:
+                output_bytes = self.socket.recv()
+                output = struct.unpack("<B", output_bytes)[0]
+            outputs.append(output)
 
-        return outputs          
+        return outputs
 
-    def recv_prediction_response(self, msg_id):
-        self.socket.recv()
-        msg_type_bytes = self.socket.recv()
-        msg_type = struct.unpack("<I", msg_type_bytes)[0]
+    # def recv_prediction_response(self, msg_id):
+    #     self.socket.recv()
+    #     msg_type_bytes = self.socket.recv()
+    #     msg_type = struct.unpack("<I", msg_type_bytes)[0]
 
-        if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
-            msg_id_bytes = socket.recv()
-            msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
-            # list of byte arrays
-            response_header = socket.recv()
-            response_type = struct.unpack("<I", response_header)[0]
+    #     if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
+    #         msg_id_bytes = socket.recv()
+    #         msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
+    #         # list of byte arrays
+    #         response_header = socket.recv()
+    #         response_type = struct.unpack("<I", response_header)[0]
 
-            if response_type == REQUEST_TYPE_PREDICT:
-                pass
+    #         if response_type == REQUEST_TYPE_PREDICT:
+    #             pass
     
     def connect_to_container(self):
         self.actor_address = "tcp://{0}:{1}".format(self.actor_ip,
@@ -536,10 +592,11 @@ class Actor():
             model_name = self.socket.recv_string()
             model_version = self.socket.recv_string()
             model_input_type = self.socket.recv_string()
+            model_output_type = self.socket.recv_string()
             container_rpc_version_bytes = self.socket.recv()
             container_rpc_version = struct.unpack("<I", container_rpc_version_bytes)[0]
 
-            self.container_meta = ContainerMetadata(model_name, model_version, model_input_type, container_rpc_version)
+            self.container_meta = ContainerMetadata(model_name, model_version, model_input_type, model_output_type, container_rpc_version)
             self.connected = True
             print("Actor Model " + model_name + " is connected")
         else:

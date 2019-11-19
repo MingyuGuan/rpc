@@ -19,48 +19,48 @@ if __name__ == "__main__":
     port = 7000
     rpc_service.start(port)
 
-    # deploy container
-    print("Building and Deploying Container")
-    name = "pytorch_container"
-    version = 1
-    model_path = "pytorch_container/"
-    prediction_file = "pytorch_container.py"
-    ports = {'7000': 7000}
+    # # deploy container
+    # print("Building and Deploying Container")
+    # name = "pytorch_container"
+    # version = 1
+    # model_path = "pytorch_container/"
+    # prediction_file = "pytorch_container.py"
+    # ports = {'7000': 7000}
 
-    docker_client = docker.from_env()
-    image = rpc_service.build_model(docker_client, 
-                        name,
-                        version,
-                        model_path,
-                        prediction_file,
-                        port=7000,
-                        base_image="alice97/serve-base",
-                        container_registry=None,
-                        pkgs_to_install=None)
-    print("Create image successfully!")
-    rpc_service.run_container(docker_client, image, detach=True, ports=ports)
-    print("{} is is running..".format(name))
+    # docker_client = docker.from_env()
+    # image = rpc_service.build_model(docker_client, 
+    #                     name,
+    #                     version,
+    #                     model_path,
+    #                     prediction_file,
+    #                     port=7000,
+    #                     base_image="alice97/serve-base",
+    #                     container_registry=None,
+    #                     pkgs_to_install=None)
+    # print("Create image successfully!")
+    # rpc_service.run_container(docker_client, image, detach=True, ports=ports)
+    # print("{} is is running..".format(name))
 
     # connect to container
     print("Connecting to conatiner...")
     rpc_service.connect_to_container()
 
     # send first request
-    print("\nSending a request with inputs: dog.jpg, cat.jpg")
-    input_type = "imgs"
-    img1 = base64.b64encode(open("images/dog.jpg", "rb").read())
-    img2 = base64.b64encode(open("images/cat.jpg", "rb").read())
+    print("\nSending a request with inputs: elephant.jpg")
+    input_type = "strs"
+    img1 = base64.b64encode(open("images/elephant.jpg", "rb").read())
+    # img2 = base64.b64encode(open("images/cat.jpg", "rb").read())
 
-    inputs = [img1, img2]
+    inputs = [img1]
     outputs, num_outputs = rpc_service.send_prediction_request(input_type, inputs)
 
     print("\nOUTPUTS:")
-    print('\n'.join(outputs))
+    print('\n'.join(map(str, outputs)))
 
     # stop contaienr
-    print("\nStopping container..")
-    rpc_service.stop_container()
-    print("Successfully quit")
+    # print("\nStopping container..")
+    # rpc_service.stop_container()
+    # print("Successfully quit")
 
     # print("\nSending 200 request to plot cdf..")
     # time_arr = []
