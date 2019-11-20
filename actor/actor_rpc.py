@@ -23,7 +23,8 @@ else:
 import docker
 import tempfile
 import tarfile
-import zlib, cPickle as pickle
+import zlib
+import pickle
 
 RPC_VERSION = 3
 
@@ -122,7 +123,7 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
-    else
+    else:
         return "abstract"
 
 def string_to_output_type(output_str):
@@ -170,7 +171,7 @@ def output_type_to_string(output_type):
         return "doubles"
     elif output_type == OUTPUT_TYPE_STRINGS:
         return "string"
-    else
+    else:
         return "abstract"
 
 class EventHistory:
@@ -329,9 +330,7 @@ class PredictionRequest:
         return PredictionRequest.header_buffer[:header_length], header_length
 
 class ContainerMetadata():
-    def __init__(self, model_name, model_version, model_input_type, model_output_type, container_rpc_version):
-        self.model_name = model_name
-        self.model_version  = model_version
+    def __init__(self, model_input_type, model_output_type, container_rpc_version):
         self.model_input_type = int(model_input_type)
         self.model_output_type = int(model_output_type)
         self.container_rpc_version = container_rpc_version
@@ -368,6 +367,10 @@ class Actor():
         with tempfile.NamedTemporaryFile(mode="w+b", suffix="tar") as context_file:
             # Create build context tarfile
             with tarfile.TarFile(fileobj=context_file, mode="w") as context_tar:
+                from shutil import copyfile
+                # copyfile("__init__.py", os.path.join(model_path, "__init__.py"))
+                copyfile("container_rpc.py", os.path.join(model_path, "container_rpc.py"))
+                # copyfile("pytorch_container.py", os.path.join(model_path, "pytorch_container.py"))
                 context_tar.add(model_path)
                 try:
                     df_contents = StringIO(
@@ -424,6 +427,9 @@ class Actor():
 
     def stop_container(self):
         self.container.stop()
+
+    def remove_container(self):
+        self.container.remove()
 
     def validate_rpc_version(self, received_version):
         if received_version != RPC_VERSION:
@@ -544,25 +550,11 @@ class Actor():
                 output = struct.unpack("<B", output_bytes)[0]
             elif self.container_meta.model_output_type == OUTPUT_TYPE_ABSTRACT:
                 output_bytes = self.socket.recv()
-                output = zlib.decompress(output_bytes)
+                p_output = zlib.decompress(output_bytes)
+                output = pickle.loads(p_output)
             outputs.append(output)
 
         return outputs
-
-    # def recv_prediction_response(self, msg_id):
-    #     self.socket.recv()
-    #     msg_type_bytes = self.socket.recv()
-    #     msg_type = struct.unpack("<I", msg_type_bytes)[0]
-
-    #     if msg_type == MESSAGE_TYPE_CONTAINER_CONTENT:
-    #         msg_id_bytes = socket.recv()
-    #         msg_id = int(struct.unpack("<I", msg_id_bytes)[0])
-    #         # list of byte arrays
-    #         response_header = socket.recv()
-    #         response_type = struct.unpack("<I", response_header)[0]
-
-    #         if response_type == REQUEST_TYPE_PREDICT:
-    #             pass
     
     def connect_to_container(self):
         self.actor_address = "tcp://{0}:{1}".format(self.actor_ip,
@@ -605,16 +597,14 @@ class Actor():
             print(
                 "Received new container message from container!"
             )
-            model_name = self.socket.recv_string()
-            model_version = self.socket.recv_string()
             model_input_type = self.socket.recv_string()
             model_output_type = self.socket.recv_string()
             container_rpc_version_bytes = self.socket.recv()
             container_rpc_version = struct.unpack("<I", container_rpc_version_bytes)[0]
 
-            self.container_meta = ContainerMetadata(model_name, model_version, model_input_type, model_output_type, container_rpc_version)
+            self.container_meta = ContainerMetadata(model_input_type, model_output_type, container_rpc_version)
             self.connected = True
-            print("Actor Model " + model_name + " is connected")
+            print("Actor Model is connected")
         else:
             print("Wrong message type %d, should be new container msg" % msg_type)
             raise
@@ -675,3 +665,6 @@ class RPCService:
 
     def stop_container(self):
         self.actor.stop_container()
+
+    def remove_container(self):
+        self.actor.remove_container()

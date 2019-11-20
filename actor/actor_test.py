@@ -20,26 +20,26 @@ if __name__ == "__main__":
     rpc_service.start(port)
 
     # # deploy container
-    # print("Building and Deploying Container")
-    # name = "pytorch_container"
-    # version = 1
-    # model_path = "pytorch_container/"
-    # prediction_file = "pytorch_container.py"
-    # ports = {'7000': 7000}
+    print("Building and Deploying Container")
+    name = "pytorch_container"
+    version = 1
+    model_path = "transform_model_path/"
+    prediction_file = "container_rpc.py"
+    ports = {'7000': 7000}
 
-    # docker_client = docker.from_env()
-    # image = rpc_service.build_model(docker_client, 
-    #                     name,
-    #                     version,
-    #                     model_path,
-    #                     prediction_file,
-    #                     port=7000,
-    #                     base_image="alice97/serve-base",
-    #                     container_registry=None,
-    #                     pkgs_to_install=None)
-    # print("Create image successfully!")
-    # rpc_service.run_container(docker_client, image, detach=True, ports=ports)
-    # print("{} is is running..".format(name))
+    docker_client = docker.from_env()
+    image = rpc_service.build_model(docker_client, 
+                        name,
+                        version,
+                        model_path,
+                        prediction_file,
+                        port=7000,
+                        base_image="alice97/serve-base",
+                        container_registry=None,
+                        pkgs_to_install=None)
+    print("Create image successfully!")
+    rpc_service.run_container(docker_client, image, detach=True, ports=ports)
+    print("{} is is running..".format(name))
 
     # connect to container
     print("Connecting to conatiner...")
@@ -58,9 +58,11 @@ if __name__ == "__main__":
     print('\n'.join(map(str, outputs)))
 
     # stop contaienr
-    # print("\nStopping container..")
-    # rpc_service.stop_container()
-    # print("Successfully quit")
+    print("\nStopping container..")
+    rpc_service.stop_container()
+    print("Removing container..")
+    rpc_service.remove_container()
+    print("Successfully quit")
 
     # print("\nSending 200 request to plot cdf..")
     # time_arr = []

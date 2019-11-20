@@ -16,9 +16,15 @@ if sys.version_info < (3, 0):
     from subprocess32 import Popen, PIPE
 else:
     from subprocess import Popen, PIPE
-# from prometheus_client import start_http_server
-# from prometheus_client.core import Counter, Gauge, Histogram, Summary
-# import clipper_admin.metrics as metrics
+import zlib
+import pickle
+
+import cloudpickle
+
+import json
+import jsonpickle
+import mlflow.pytorch 
+import mlflow.tensorflow
 
 RPC_VERSION = 3
 
@@ -72,6 +78,16 @@ INPUT_HEADER_DTYPE = np.dtype(np.uint64)
 
 logger = logging.getLogger(__name__)
 
+FRAMEWORKS = {
+  'torch'    : {
+                  'load': mlflow.pytorch.load_model,
+                  'save': mlflow.pytorch.save_model
+  },
+  'tensorflow' : {
+                  'load' : mlflow.tensorflow.load_model,
+                  'save' : mlflow.tensorflow.save_model
+  },
+}
 
 def string_to_input_type(input_str):
     input_str = input_str.strip().lower()
@@ -119,7 +135,7 @@ def input_type_to_string(input_type):
         return "doubles"
     elif input_type == INPUT_TYPE_STRINGS:
         return "string"
-    else
+    else:
         return "abstract"
 
 def string_to_output_type(output_str):
@@ -167,7 +183,7 @@ def output_type_to_string(output_type):
         return "doubles"
     elif output_type == OUTPUT_TYPE_STRINGS:
         return "string"
-    else
+    else:
         return "abstract"
 
 
@@ -345,7 +361,7 @@ class Server():
                         if input_type == INPUT_TYPE_STRINGS:
                             inputs = self.recv_string_content(
                                 socket, num_inputs, input_sizes)
-                        else input_type == INPUT_TYPE_ABSTRACT:
+                        elif input_type == INPUT_TYPE_ABSTRACT:
                             inputs = self.recv_abstract_content(socket, num_inputs)
                         else:
                             inputs = self.recv_primitive_content(
@@ -410,15 +426,15 @@ class Server():
     def recv_abstract_content(self, socket, num_inputs):
         # Create an empty numpy array that will contain
         # input string references
-        inputs = np.empty(num_inputs, dtype=object)
+        inputs = []
         for i in range(num_inputs):
             # Obtain a memoryview of the received message's
             # ZMQ frame buffer
-            input_item_buffer = socket.recv(copy=False).buffer
+            input_compress = socket.recv()
             # Copy the memoryview content into a string object
-            input_str = bytearray(input_item_buffer.tobytes())
-            inputs[i] = input_str
-
+            p_input = zlib.decompress(input_compress)
+            inp = pickle.loads(p_input)
+            inputs[i] = inp
         return inputs
 
     def recv_primitive_content(self, socket, num_inputs, input_sizes,
@@ -486,8 +502,6 @@ class Server():
         else:
             socket.send("".encode('utf-8'), zmq.SNDMORE)
         socket.send(struct.pack("<I", MESSAGE_TYPE_NEW_CONTAINER), zmq.SNDMORE)
-        socket.send_string(self.model_name, zmq.SNDMORE)
-        socket.send_string(str(self.model_version), zmq.SNDMORE)
         socket.send_string(str(self.model_input_type), zmq.SNDMORE)
         socket.send_string(str(self.model_output_type), zmq.SNDMORE)
         socket.send(struct.pack("<I", RPC_VERSION))
@@ -640,7 +654,7 @@ class PredictionResponse:
             if isinstance(output, str) or isinstance(output, bytes):
                 struct.pack_into("<Q", PredictionResponse.header_buffer,
                                  header_idx, len(output))
-            elif self.input_type == INPUT_TYPE_ABSTRACT:
+            elif self.output_type == INPUT_TYPE_ABSTRACT:
                 struct.pack_into("<Q", PredictionResponse.header_buffer,
                              header_idx, 0) #TODO
             else:
@@ -675,16 +689,15 @@ class FeedbackResponse():
 
 
 class RPCService:
-    def __init__(self, model_path, input_type, output_type):
-        self.model_path = model_path
+    def __init__(self, input_type, output_type):
         self.input_type = input_type
         self.output_type = output_type
 
-    def get_model_path(self):
-        return self.model_path
-
     def get_input_type(self):
         return self.input_type
+
+    def get_output_type(self):
+        return self.output_type
 
     def get_event_history(self):
         if self.server:
@@ -693,15 +706,13 @@ class RPCService:
             print("Cannot retrieve message history for inactive RPC service!")
             raise
 
-    def start(self, model, model_name, model_version, host = "0.0.0.0", port = 7000):
+    def start(self, model, port = 7000, host = "0.0.0.0",):
         """
         Args:
             model (object): The loaded model object ready to make predictions.
         """
-        self.model_name = model_name
-        self.model_version = model_version
-        self.host = host
         self.port = port
+        self.host = host
         
         try:
             ip = socket.gethostbyname(self.host)
@@ -710,10 +721,37 @@ class RPCService:
             sys.exit(1)
         context = zmq.Context()
         self.server = Server(context, ip, self.port)
-        self.server.model_name = self.model_name
-        self.server.model_version = self.model_version
         self.server.model_input_type = string_to_input_type(self.input_type)
         self.server.model_output_type = string_to_output_type(self.output_type)
         self.server.model = model
 
         self.server.run()
+
+
+def load_model():
+    with open('metadata.json','r') as fp:
+        metadata = jsonpickle.decode(json.load(fp))
+    framework = metadata['framework']
+    args_info = metadata['args_info']
+    args_list = []
+    for argName in args_info.keys():
+      is_dir = args_info[argName]['is_dir']
+      if not is_dir:
+        with open(argName,'rb') as fp:
+          arg = cloudpickle.load(fp)
+      else:
+        arg = FRAMEWORKS[framework]['load'](argName)
+      args_list.append(arg)
+    model_class = cloudpickle.loads(metadata['prediction_logic'])
+    input_type = str(metadata['AbstractModelType']['input_type'])
+    output_type = str(metadata['AbstractModelType']['output_type'])
+    model = model_class(*args_list)
+    return model, input_type, output_type
+
+if __name__ == "__main__":
+    print("Load Model...")
+    model, input_type, output_type = load_model()
+
+    print("Starting PyTorchContainer container..")
+    rpc_service = RPCService(input_type, output_type)
+    rpc_service.start(model)

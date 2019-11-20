@@ -2,3 +2,6 @@ pyzmq
 numpy
 docker-py
 cloudpickle
+jsonpickle
+mlflow
+tensorflow
